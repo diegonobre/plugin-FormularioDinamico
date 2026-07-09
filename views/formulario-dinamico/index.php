@@ -1,19 +1,7 @@
 <?php
-/**
- * @var MapasCulturais\App $app
- * @var MapasCulturais\Themes\BaseV2\Theme $this
- *
- * Listagem de formulários dinâmicos
- */
-
 use MapasCulturais\i;
 
-$this->import('
-    mc-link
-    mc-icon
-    mc-card
-    mc-modal
-');
+$this->import('mc-link mc-icon mc-card mc-modal');
 ?>
 <div class="entity-list">
     <header class="entity-list__header">
@@ -51,21 +39,16 @@ $this->import('
                             <td><code><?= htmlspecialchars($form->slug) ?></code></td>
                             <td>
                                 <?php
-                                $labels = [
-                                    'agent' => i::__('Agente'),
-                                    'space' => i::__('Espaço'),
-                                    'event' => i::__('Evento'),
-                                    'opportunity' => i::__('Oportunidade'),
-                                ];
+                                $labels = ['agent' => i::__('Agente'), 'space' => i::__('Espaço'), 'event' => i::__('Evento'), 'opportunity' => i::__('Oportunidade')];
                                 echo $labels[$form->entidade] ?? $form->entidade;
                                 ?>
                             </td>
                             <td><?= (int)$form->total_campos ?></td>
                             <td>
-                                <?php if ($form->ativo): ?>
-                                    <span class="badge badge-success"><?= i::__('Ativo') ?></span>
+                                <?php if ($form->status === 'published'): ?>
+                                    <span class="badge badge-success"><?= i::__('Publicado') ?></span>
                                 <?php else: ?>
-                                    <span class="badge badge-secondary"><?= i::__('Inativo') ?></span>
+                                    <span class="badge badge-secondary"><?= i::__('Rascunho') ?></span>
                                 <?php endif; ?>
                             </td>
                             <td class="entity-list__actions-cell">
@@ -74,6 +57,18 @@ $this->import('
                                     <mc-icon name="edit"></mc-icon>
                                     <?= i::__('Editar') ?>
                                 </a>
+
+                                <?php if ($form->status !== 'published'): ?>
+                                    <form method="POST"
+                                          action="<?= $app->createUrl('formulario-dinamico', 'publicar') ?>"
+                                          style="display:inline"
+                                          onsubmit="return confirm('<?= i::__('Publicar este formulário? Ele substituirá o formulário atual da entidade.') ?>')">
+                                        <input type="hidden" name="id" value="<?= $form->id ?>">
+                                        <button type="submit" class="btn btn-success btn-sm">
+                                            <?= i::__('Publicar') ?>
+                                        </button>
+                                    </form>
+                                <?php endif; ?>
 
                                 <?php if ($form->entidade === 'opportunity'): ?>
                                     <a class="btn btn-secondary btn-sm"

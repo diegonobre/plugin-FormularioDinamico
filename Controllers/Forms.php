@@ -5,7 +5,7 @@ namespace FormularioDinamico\Controllers;
 use MapasCulturais\App;
 use MapasCulturais\i;
 use MapasCulturais\Exceptions\PermissionDenied;
-use MapasCulturais\Exceptions\ValidationError;
+use MapasCulturais\Exceptions\BadRequest;
 
 /**
  * Controller público do plugin FormularioDinamico
@@ -91,12 +91,12 @@ class Forms extends \MapasCulturais\Controller
 
         $entityClass = \FormularioDinamico\Plugin::ENTITY_MAP[$entidade] ?? null;
         if (!$entityClass || !$entityId) {
-            throw new ValidationError(i::__('Parâmetros inválidos.'));
+            throw new BadRequest(i::__('Parâmetros inválidos.'));
         }
 
         $entity = $app->repo($entityClass)->find($entityId);
         if (!$entity) {
-            throw new ValidationError(i::__('Entidade não encontrada.'));
+            throw new BadRequest(i::__('Entidade não encontrada.'));
         }
 
         // Verifica permissão
@@ -104,7 +104,7 @@ class Forms extends \MapasCulturais\Controller
 
         $plugin = \FormularioDinamico\Plugin::getInstance();
         if (!$plugin) {
-            throw new ValidationError(i::__('Plugin não inicializado.'));
+            throw new BadRequest(i::__('Plugin não inicializado.'));
         }
 
         if ($entidade === 'opportunity') {
@@ -114,7 +114,7 @@ class Forms extends \MapasCulturais\Controller
         }
 
         if (!$form) {
-            throw new ValidationError(i::__('Nenhum formulário ativo encontrado para esta entidade.'));
+            throw new BadRequest(i::__('Nenhum formulário ativo encontrado para esta entidade.'));
         }
 
         // Salva os valores

@@ -1,6 +1,3 @@
-// Componente form-builder
-// Construtor de formulários dinâmicos com drag-and-drop (SortableJS)
-
 app.component('form-builder', {
     template: $TEMPLATES['form-builder'],
 
@@ -10,11 +7,12 @@ app.component('form-builder', {
         initialTitulo: { type: String, default: '' },
         initialSlug: { type: String, default: '' },
         initialDescricao: { type: String, default: '' },
-        initialAtivo: { type: [Boolean, String], default: true },
         initialCampos: { type: Array, default: () => [] },
+        initialGrupos: { type: Array, default: () => [{id:0, titulo:'Geral', colunas:1}] },
         camposNativos: { type: Array, default: () => [] },
         urlSalvar: { type: String, default: '' },
         entidadeLabel: { type: String, default: '' },
+        isDraft: { type: Boolean, default: true },
     },
 
     data() {
@@ -22,19 +20,18 @@ app.component('form-builder', {
             titulo: this.initialTitulo,
             slug: this.initialSlug,
             descricao: this.initialDescricao,
-            ativo: String(this.initialAtivo) === 'true' || this.initialAtivo === true,
+            ativo: true,
             campos: [],
+            grupos: [],
             editingIndex: null,
-            dragType: null,
-            dragIndex: null,
+            activeGroupId: 0,
+            _sortableInstances: [],
             _uidCounter: 0,
         };
     },
 
     computed: {
-        fieldTypes() {
-            return $MAPAS.formBuilderFieldTypes || [];
-        },
+        fieldTypes() { return $MAPAS.formBuilderFieldTypes || []; },
 
         camposSerialized() {
             return this.campos.map(c => ({
@@ -46,88 +43,135 @@ app.component('form-builder', {
                 obrigatorio: c.obrigatorio,
                 coluna_span: c.coluna_span,
                 editavel: c.editavel !== false,
+                grupo_id: c.grupo_id !== undefined ? c.grupo_id : this.activeGroupId,
+                grupo_titulo: this.getGrupoTitle(c.grupo_id !== undefined ? c.grupo_id : this.activeGroupId),
             }));
         },
+
+        grupoIds() { return this.grupos.map(g => g.id).join(','); },
+    },
+
+    watch: {
+        grupoIds() { this.$nextTick(() => this.initSortable()); },
+        'campos.length'() { this.$nextTick(() => this.initSortable()); },
     },
 
     mounted() {
-        this.initCampos();
-        this.initSortable();
+        this.grupos = this.initialGrupos.map(g => ({...g}));
+        if (this.grupos.length === 0) {
+            this.grupos = [{id: 0, titulo: 'Geral', colunas: 1}];
+        }
+        this.activeGroupId = this.grupos[0].id;
+
+        this.campos = this.initialCampos.map(c => ({
+            ...c,
+            _uid: this._uid(),
+            grupo_id: c.grupo_id !== undefined ? c.grupo_id : 0,
+            grupo_titulo: c.grupo_titulo || this.getGrupoTitle(c.grupo_id !== undefined ? c.grupo_id : 0),
+        }));
+
+        this.$nextTick(() => this.initSortable());
+    },
+
+    beforeUnmount() {
+        this.destroySortable();
     },
 
     methods: {
-        _uid() {
-            return ++this._uidCounter;
+        _uid() { return ++this._uidCounter; },
+
+        getGrupoTitle(gid) {
+            const g = this.grupos.find(x => x.id === gid);
+            return g ? g.titulo : 'Geral';
         },
 
-        initCampos() {
-            if (Array.isArray(this.initialCampos)) {
-                this.campos = this.initialCampos.map(c => ({
-                    ...c,
-                    _uid: this._uid(),
-                }));
-            }
+        camposInGroup(gid) {
+            return this.campos.filter(c => (c.grupo_id || 0) === gid);
+        },
+
+        countCamposInGroup(gid) {
+            return this.camposInGroup(gid).length;
+        },
+
+        destroySortable() {
+            this._sortableInstances.forEach(s => {
+                try { s.destroy(); } catch(e) {}
+            });
+            this._sortableInstances = [];
         },
 
         initSortable() {
-            const container = this.$refs.sortableContainer;
-            if (!container || typeof Sortable === 'undefined') return;
+            this.destroySortable();
+            var containers = document.querySelectorAll('.form-builder__grupo-fields');
+            if (!containers.length || typeof Sortable === 'undefined') return;
 
-            const self = this;
-            Sortable.create(container, {
-                animation: 150,
-                handle: '.form-builder__field-grip',
-                ghostClass: 'form-builder__field-item--ghost',
-                onEnd(evt) {
-                    const item = self.campos.splice(evt.oldIndex, 1)[0];
-                    if (item) {
-                        self.campos.splice(evt.newIndex, 0, item);
-                    }
-                },
+            var self = this;
+            containers.forEach(function(el) {
+                var s = Sortable.create(el, {
+                    group: 'form-fields',
+                    animation: 150,
+                    handle: '.form-builder__field-grip',
+                    ghostClass: 'form-builder__field-item--ghost',
+                    onEnd: function(evt) {
+                        // Use a small delay so DOM reflects the move
+                        setTimeout(function() {
+                            self.reorderFromDom();
+                        }, 10);
+                    },
+                    onAdd: function(evt) {
+                        // When a field moves from one group to another, update grupo_id
+                        var grupoEl = evt.target.closest('.form-builder__grupo');
+                        var targetGid = grupoEl ? parseInt(grupoEl.dataset.gid) : self.activeGroupId;
+                        var uid = evt.item ? parseInt(evt.item.dataset.uid) : null;
+                        if (uid) {
+                            var campo = self.campos.find(function(c) { return c._uid === uid; });
+                            if (campo) {
+                                campo.grupo_id = targetGid;
+                                campo.grupo_titulo = self.getGrupoTitle(targetGid);
+                            }
+                        }
+                    },
+                });
+                self._sortableInstances.push(s);
             });
         },
 
-        onDragStart(event, type) {
-            this.dragType = type;
-            event.dataTransfer.effectAllowed = 'copy';
-            event.dataTransfer.setData('text/plain', type);
-        },
+        /** Rebuild campos[] order from DOM to reflect drag-and-drop result */
+        reorderFromDom: function() {
+            var allGrupoEls = document.querySelectorAll('.form-builder__grupo');
+            var newOrder = [];
 
-        onFieldDragStart(event, idx) {
-            this.dragIndex = idx;
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', 'move');
-        },
+            allGrupoEls.forEach(function(grupoEl) {
+                var gid = parseInt(grupoEl.dataset.gid);
+                var fieldEls = grupoEl.querySelectorAll('.form-builder__field-item[data-uid]');
+                fieldEls.forEach(function(el) {
+                    var uid = parseInt(el.dataset.uid);
+                    var campo = this.campos.find(function(c) { return c._uid === uid; });
+                    if (campo) {
+                        campo.grupo_id = gid;
+                        campo.grupo_titulo = this.getGrupoTitle(gid);
+                        newOrder.push(campo);
+                    }
+                }, this);
+            }, this);
 
-        onNativeDragStart(event, idx) {
-            // Native fields can be reordered but we track position for reference
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', 'native-' + idx);
-        },
-
-        onDrop(event) {
-            const type = event.dataTransfer.getData('text/plain');
-            if (type && type !== 'move' && !type.startsWith('native-')) {
-                this.addField(type);
+            if (newOrder.length > 0) {
+                this.campos = newOrder;
             }
         },
 
-        onDropOnField(event, idx) {
-            const type = event.dataTransfer.getData('text/plain');
-            if (type && type !== 'move' && !type.startsWith('native-')) {
-                const newField = this.createField(type);
-                this.campos.splice(idx, 0, newField);
-            }
+        addFieldToActiveGroup: function(type) {
+            var field = this.createField(type);
+            field.grupo_id = this.activeGroupId;
+            field.grupo_titulo = this.getGrupoTitle(this.activeGroupId);
+            this.campos.push(field);
         },
 
-        onDropOnNative(event, idx) {
-            // Drop on native area — ignore for dynamic fields
-        },
-
-        createField(type) {
-            const field = {
-                _uid: this._uid(),
-                slug: 'campo_' + this._uid(),
+        createField: function(type) {
+            var uid = this._uid();
+            return {
+                _uid: uid,
+                slug: 'campo_' + uid,
                 rotulo: this.getDefaultLabel(type),
                 placeholder: '',
                 tipo: type,
@@ -135,52 +179,56 @@ app.component('form-builder', {
                 obrigatorio: false,
                 coluna_span: 12,
                 editavel: true,
+                grupo_id: this.activeGroupId,
+                grupo_titulo: this.getGrupoTitle(this.activeGroupId),
             };
-            return field;
         },
 
-        getDefaultLabel(type) {
-            const labels = {
-                text: 'Novo campo de texto',
-                textarea: 'Novo campo de texto longo',
-                number: 'Novo campo numérico',
-                email: 'Novo campo de email',
-                url: 'Novo campo de URL',
-                date: 'Nova data',
-                datetime: 'Nova data e hora',
-                phone: 'Novo telefone',
-                cep: 'Novo CEP',
-                cpf: 'Novo CPF',
-                cnpj: 'Novo CNPJ',
-                select: 'Nova seleção',
-                multiselect: 'Nova multi seleção',
-                gender: 'Gênero',
+        getDefaultLabel: function(type) {
+            var labels = {
+                text:'Novo texto', textarea:'Texto longo', number:'Número',
+                email:'Email', url:'URL', date:'Data', datetime:'Data e hora',
+                phone:'Telefone', cep:'CEP', cpf:'CPF', cnpj:'CNPJ',
+                select:'Seleção', multiselect:'Multi seleção', gender:'Gênero',
             };
             return labels[type] || 'Novo campo';
         },
 
-        addField(type) {
-            this.campos.push(this.createField(type));
+        removeField: function(uid) {
+            var idx = this.campos.findIndex(function(c) { return c._uid === uid; });
+            if (idx !== -1) this.campos.splice(idx, 1);
+            if (this.editingIndex === uid) this.editingIndex = null;
         },
 
-        removeField(idx) {
-            this.campos.splice(idx, 1);
-            if (this.editingIndex === idx) {
-                this.editingIndex = null;
-            } else if (this.editingIndex > idx) {
-                this.editingIndex--;
-            }
+        editField: function(uid) { this.editingIndex = uid; },
+
+        getEditingCampo: function() { return this.campos.find(function(c) { return c._uid === this.editingIndex; }, this); },
+
+        saveField: function(data) {
+            var campo = this.campos.find(function(c) { return c._uid === this.editingIndex; }, this);
+            if (campo) Object.assign(campo, data);
+            this.editingIndex = null;
         },
 
-        editField(idx) {
-            this.editingIndex = idx;
+        addGroup: function() {
+            var id = this.grupos.length;
+            this.grupos.push({id: id, titulo: 'Novo grupo', colunas: 1});
+            this.activeGroupId = id;
         },
 
-        saveField(data) {
-            if (this.editingIndex !== null && this.campos[this.editingIndex]) {
-                Object.assign(this.campos[this.editingIndex], data);
-                this.editingIndex = null;
-            }
+        removeGroup: function(gidx) {
+            var g = this.grupos[gidx];
+            if (!g || this.grupos.length <= 1) return;
+            var targetId = this.grupos[0].id;
+            this.campos.forEach(function(c) {
+                if ((c.grupo_id || 0) === g.id) {
+                    c.grupo_id = targetId;
+                    c.grupo_titulo = this.getGrupoTitle(targetId);
+                }
+            }, this);
+            this.grupos.splice(gidx, 1);
+            if (this.activeGroupId === g.id) this.activeGroupId = targetId;
         },
+
     },
 });

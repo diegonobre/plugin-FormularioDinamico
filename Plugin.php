@@ -6,14 +6,8 @@ use MapasCulturais\App;
 use MapasCulturais\i;
 use MapasCulturais\Definitions\Metadata;
 use MapasCulturais\Exceptions\PermissionDenied;
-use MapasCulturais\Exceptions\ValidationError;
+use MapasCulturais\Exceptions\BadRequest;
 
-/**
- * Plugin FormularioDinamico
- *
- * Permite a criação de formulários dinâmicos com interface de arrastar-e-soltar
- * para as entidades Agente, Espaço, Evento e Oportunidade.
- */
 class Plugin extends \MapasCulturais\Plugin
 {
     const ENTITY_MAP = [
@@ -45,20 +39,16 @@ class Plugin extends \MapasCulturais\Plugin
     public function _init()
     {
         $app = App::i();
-
-        // Cria as tabelas do banco se não existirem (primeira execução)
         $this->createTablesIfNeeded();
 
-        // Registra o ícone "form" para o mc-icon
+        // Ícone
         $app->hook('component(mc-icon).iconset', function (&$iconset) {
             $iconset['form'] = 'cil:notes';
             $iconset['form-field'] = 'cil:input';
             $iconset['form-builder'] = 'cil:pencil';
         });
 
-        // ================================================================
-        // Hook panel.nav: Adiciona "Formulários" no menu de Administração
-        // ================================================================
+        // Nav: "Formulários" no admin (saasSuperAdmin)
         $app->hook('panel.nav', function (&$groups) use ($app) {
             $groups['admin']['items'][] = [
                 'route'     => 'formulario-dinamico/index',
@@ -70,9 +60,7 @@ class Plugin extends \MapasCulturais\Plugin
             ];
         });
 
-        // ================================================================
-        // API pública: retorna campos dinâmicos de uma entidade (JSON)
-        // ================================================================
+        // API pública
         $app->hook('GET(formulario-dinamico.campos)', function () use ($app) {
             $this->requireAuthentication();
             $controller = new Controllers\Forms();
@@ -81,13 +69,27 @@ class Plugin extends \MapasCulturais\Plugin
         });
 
         // ================================================================
-        // Injeção nos templates de criação/edição das entidades
+        // Injeção nos forms de criação/edição (apenas formulários publicados)
         // ================================================================
         $entity_types = ['agent', 'space', 'event'];
         foreach ($entity_types as $type) {
-            $app->hook("template({$type}.<<create|edit>>.tab-about):end", function () use ($app, $type) {
+            // Edit: injeta campos dinâmicos + CSS para esconder cards originais
+            $app->hook("template({$type}.edit.tab-about):end", function () use ($app, $type) {
                 $entity = $this->data->entity;
-                $form = self::$_instance ? self::$_instance->getActiveForm($type) : null;
+                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
+                if ($form) {
+                    echo '<style>.mc-card { display: none; } [data-dynamic-form="true"] { display: block; }</style>';
+                    $this->part('dynamic-form-fields', [
+                        'form'   => $form,
+                        'entity' => $entity,
+                    ]);
+                }
+            });
+
+            // Create: injeta campos dinâmicos sem esconder originais
+            $app->hook("template({$type}.create.tab-about):end", function () use ($app, $type) {
+                $entity = $this->data->entity;
+                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
                 if ($form) {
                     $this->part('dynamic-form-fields', [
                         'form'   => $form,
@@ -98,7 +100,7 @@ class Plugin extends \MapasCulturais\Plugin
 
             $app->hook("template({$type}.single.tab-about):end", function () use ($app, $type) {
                 $entity = $this->data->entity;
-                $form = self::$_instance ? self::$_instance->getActiveForm($type) : null;
+                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
                 if ($form) {
                     $this->part('dynamic-form-fields-display', [
                         'form'   => $form,
@@ -108,11 +110,23 @@ class Plugin extends \MapasCulturais\Plugin
             });
         }
 
-        // Oportunidade — formulário vinculado à oportunidade específica
-        $app->hook("template(opportunity.<<create|edit>>.tab-about):end", function () use ($app) {
+        // Oportunidade
+        $app->hook("template(opportunity.create.tab-about):end", function () use ($app) {
             $entity = $this->data->entity;
             $form = self::$_instance ? self::$_instance->getFormForOpportunity($entity->id) : null;
             if ($form) {
+                $this->part('dynamic-form-fields', [
+                    'form'   => $form,
+                    'entity' => $entity,
+                ]);
+            }
+        });
+
+        $app->hook("template(opportunity.edit.tab-about):end", function () use ($app) {
+            $entity = $this->data->entity;
+            $form = self::$_instance ? self::$_instance->getFormForOpportunity($entity->id) : null;
+            if ($form) {
+                echo '<style>.mc-card { display: none; } [data-dynamic-form="true"] { display: block; }</style>';
                 $this->part('dynamic-form-fields', [
                     'form'   => $form,
                     'entity' => $entity,
@@ -131,50 +145,39 @@ class Plugin extends \MapasCulturais\Plugin
             }
         });
 
-        // ================================================================
         // Validação no servidor
-        // ================================================================
         foreach (['agent', 'space', 'event'] as $type) {
             $entityClass = self::ENTITY_MAP[$type];
             $app->hook("entity({$entityClass}).save:before", function () use ($app, $type) {
                 $entity = $this;
-                $form = self::$_instance ? self::$_instance->getActiveForm($type) : null;
+                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
                 if (!$form) return;
-
                 foreach ($form->campos as $campo) {
                     if (!$campo->obrigatorio) continue;
                     $key = "{$form->slug}_{$campo->slug}";
                     $value = $entity->getMetadata($key);
-
                     if (empty($value)) {
-                        throw new ValidationError(
-                            i::__("O campo {$campo->rotulo} é obrigatório.")
-                        );
+                        throw new BadRequest(i::__("O campo {$campo->rotulo} é obrigatório."));
                     }
                 }
             });
         }
 
-        // Oportunidade
         $app->hook("entity(MapasCulturais\Entities\Opportunity).save:before", function () use ($app) {
             $entity = $this;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($entity->id) : null;
+            $form = self::$_instance ? self::$_instance->getPublishedForm('opportunity') : null;
             if (!$form) return;
-
             foreach ($form->campos as $campo) {
                 if (!$campo->obrigatorio) continue;
                 $key = "{$form->slug}_{$campo->slug}";
                 $value = $entity->getMetadata($key);
-
                 if (empty($value)) {
-                    throw new ValidationError(
-                        i::__("O campo {$campo->rotulo} é obrigatório.")
-                    );
+                    throw new BadRequest(i::__("O campo {$campo->rotulo} é obrigatório."));
                 }
             }
         });
 
-        // Enfileira assets
+        // Assets
         $app->hook('GET(formulario-dinamico.<<*>>)', function () use ($app) {
             $app->view->enqueueStyle('app-v2', 'formulario-dinamico', 'css/plugin-FormularioDinamico.css');
         });
@@ -183,16 +186,13 @@ class Plugin extends \MapasCulturais\Plugin
     public function register()
     {
         $app = App::i();
-
-        // Registra controller principal para /formulario-dinamico/
         $app->registerController('formulario-dinamico', Controllers\Admin::class);
 
-        // Registra metadados dinamicamente a partir dos formulários ativos
-        $forms = $this->getActiveForms();
+        // Registra metadados APENAS de formulários publicados
+        $forms = $this->getPublishedForms();
         foreach ($forms as $form) {
             $entityClass = self::ENTITY_MAP[$form->entidade] ?? null;
             if (!$entityClass) continue;
-
             foreach ($form->campos as $campo) {
                 $key = "{$form->slug}_{$campo->slug}";
                 $cfg = [
@@ -200,54 +200,42 @@ class Plugin extends \MapasCulturais\Plugin
                     'type'        => $this->mapFieldType($campo->tipo),
                     'placeholder' => $campo->placeholder ?? '',
                 ];
-
                 if ($campo->obrigatorio) {
-                    $cfg['validations'] = [
-                        'required' => i::__("O campo {$campo->rotulo} é obrigatório")
-                    ];
+                    $cfg['validations'] = ['required' => i::__("O campo {$campo->rotulo} é obrigatório")];
                 }
-
                 if (!empty($campo->opcoes)) {
                     $cfg['options'] = $campo->opcoes;
                 }
-
                 $this->registerMetadata($entityClass, $key, $cfg);
             }
         }
     }
 
     // ================================================================
-    // Métodos auxiliares
+    // Banco de dados
     // ================================================================
 
-    /**
-     * Cria as tabelas do banco na primeira execução.
-     */
     private function createTablesIfNeeded(): void
     {
         $app = App::i();
-        try {
-            $app->em->getConnection()->executeQuery("SELECT 1 FROM formulario_dinamico LIMIT 1");
-            return;
-        } catch (\Exception $e) {
-            // Tabela não existe — cria
-        }
 
+        // Cria as tabelas (se não existirem)
         $sql = "
             CREATE TABLE IF NOT EXISTS formulario_dinamico (
                 id SERIAL PRIMARY KEY,
                 slug VARCHAR(100) NOT NULL UNIQUE,
                 titulo VARCHAR(255) NOT NULL,
                 descricao TEXT,
-                entidade VARCHAR(20) NOT NULL CHECK (entidade IN ('agent', 'space', 'event', 'opportunity')),
+                entidade VARCHAR(20) NOT NULL CHECK (entidade IN ('agent','space','event','opportunity')),
+                status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
                 ativo BOOLEAN DEFAULT true,
                 criado_por INTEGER REFERENCES agent(id),
                 criado_em TIMESTAMP DEFAULT NOW(),
                 atualizado_em TIMESTAMP DEFAULT NOW()
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_fd_ativo_agent ON formulario_dinamico (entidade) WHERE entidade = 'agent' AND ativo = true;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_fd_ativo_space ON formulario_dinamico (entidade) WHERE entidade = 'space' AND ativo = true;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_fd_ativo_event ON formulario_dinamico (entidade) WHERE entidade = 'event' AND ativo = true;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fd_published_agent ON formulario_dinamico (entidade) WHERE entidade='agent' AND status='published';
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fd_published_space ON formulario_dinamico (entidade) WHERE entidade='space' AND status='published';
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fd_published_event ON formulario_dinamico (entidade) WHERE entidade='event' AND status='published';
             CREATE TABLE IF NOT EXISTS formulario_dinamico_campo (
                 id SERIAL PRIMARY KEY,
                 formulario_id INTEGER NOT NULL REFERENCES formulario_dinamico(id) ON DELETE CASCADE,
@@ -260,9 +248,11 @@ class Plugin extends \MapasCulturais\Plugin
                 ordem INTEGER DEFAULT 0,
                 coluna_span INTEGER DEFAULT 12,
                 editavel BOOLEAN DEFAULT true,
+                grupo_id INTEGER DEFAULT 0,
+                grupo_titulo VARCHAR(255) DEFAULT '',
                 UNIQUE(formulario_id, slug)
             );
-            CREATE INDEX IF NOT EXISTS idx_fdc_ordem ON formulario_dinamico_campo (formulario_id, ordem);
+            CREATE INDEX IF NOT EXISTS idx_fdc_ordem ON formulario_dinamico_campo(formulario_id, ordem);
             CREATE TABLE IF NOT EXISTS formulario_dinamico_oportunidade (
                 id SERIAL PRIMARY KEY,
                 formulario_id INTEGER NOT NULL REFERENCES formulario_dinamico(id) ON DELETE CASCADE,
@@ -270,40 +260,65 @@ class Plugin extends \MapasCulturais\Plugin
                 UNIQUE(formulario_id, oportunidade_id)
             );
         ";
-
-        $statements = array_filter(array_map('trim', explode(';', $sql)));
-        foreach ($statements as $stmt) {
+        foreach (array_filter(array_map('trim', explode(';', $sql))) as $stmt) {
             if ($stmt && stripos($stmt, '--') !== 0) {
-                try {
-                    $app->em->getConnection()->executeStatement($stmt);
-                } catch (\Exception $e) {
-                    // Ignora erros de criação (table/index já existe)
-                }
+                try { $app->em->getConnection()->executeStatement($stmt); } catch (\Exception $e) {}
             }
+        }
+
+        // Migração: adiciona colunas que podem não existir em tabelas criadas antes da versão com grupos/status
+        $migrations = [
+            "ALTER TABLE formulario_dinamico ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'draft'",
+            "ALTER TABLE formulario_dinamico ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true",
+            "ALTER TABLE formulario_dinamico_campo ADD COLUMN IF NOT EXISTS grupo_id INTEGER DEFAULT 0",
+            "ALTER TABLE formulario_dinamico_campo ADD COLUMN IF NOT EXISTS grupo_titulo VARCHAR(255) DEFAULT ''",
+            "UPDATE formulario_dinamico SET status = 'published' WHERE status IS NULL OR status = ''",
+            "UPDATE formulario_dinamico SET ativo = true WHERE ativo IS NULL",
+        ];
+        foreach ($migrations as $stmt) {
+            try { $app->em->getConnection()->executeStatement($stmt); } catch (\Exception $e) {}
         }
     }
 
-    /**
-     * Retorna todos os formulários ativos com seus campos.
-     */
+    // ================================================================
+    // Queries
+    // ================================================================
+
+    public function getPublishedForms(): array
+    {
+        return $this->getFormsByStatus('published');
+    }
+
     public function getActiveForms(): array
+    {
+        // Para compatibilidade — retorna publicados
+        return $this->getFormsByStatus('published');
+    }
+
+    public function getAllForms(): array
+    {
+        return $this->getFormsByStatus(null);
+    }
+
+    private function getFormsByStatus(?string $status): array
     {
         $app = App::i();
         $conn = $app->em->getConnection();
+        $where = $status ? "WHERE f.status = '$status'" : "";
 
         try {
             $rows = $conn->fetchAllAssociative("
-                SELECT f.id, f.slug, f.titulo, f.descricao, f.entidade, f.ativo,
+                SELECT f.id, f.slug, f.titulo, f.descricao, f.entidade, f.status, f.ativo,
                        c.id AS campo_id, c.slug AS campo_slug,
                        c.rotulo, c.placeholder, c.tipo,
-                       c.opcoes, c.obrigatorio, c.coluna_span, c.ordem, c.editavel
+                       c.opcoes, c.obrigatorio, c.coluna_span, c.ordem, c.editavel,
+                       c.grupo_id, c.grupo_titulo
                 FROM formulario_dinamico f
                 JOIN formulario_dinamico_campo c ON c.formulario_id = f.id
-                WHERE f.ativo = true
-                ORDER BY f.id, c.ordem
+                $where
+                ORDER BY f.id, c.grupo_id, c.ordem
             ");
         } catch (\Exception $e) {
-            // Tabelas podem não existir ainda (plugin recém-instalado)
             return [];
         }
 
@@ -317,6 +332,7 @@ class Plugin extends \MapasCulturais\Plugin
                     'titulo'    => $row['titulo'],
                     'descricao' => $row['descricao'],
                     'entidade'  => $row['entidade'],
+                    'status'    => $row['status'],
                     'campos'    => [],
                 ];
             }
@@ -330,18 +346,17 @@ class Plugin extends \MapasCulturais\Plugin
                 'coluna_span' => (int)$row['coluna_span'],
                 'editavel'    => (bool)$row['editavel'],
                 'ordem'       => (int)$row['ordem'],
+                'grupo_id'    => (int)$row['grupo_id'],
+                'grupo_titulo'=> $row['grupo_titulo'] ?? '',
             ];
         }
 
         return array_values($forms);
     }
 
-    /**
-     * Retorna o formulário ativo para uma entidade (agent, space, event).
-     */
-    public function getActiveForm(string $entityType): ?object
+    public function getPublishedForm(string $entityType): ?object
     {
-        $forms = $this->getActiveForms();
+        $forms = $this->getPublishedForms();
         foreach ($forms as $form) {
             if ($form->entidade === $entityType) {
                 return $form;
@@ -350,111 +365,66 @@ class Plugin extends \MapasCulturais\Plugin
         return null;
     }
 
-    /**
-     * Retorna o formulário vinculado a uma oportunidade específica.
-     */
     public function getFormForOpportunity(int $opportunityId): ?object
     {
         $app = App::i();
         $conn = $app->em->getConnection();
-
         try {
-            // 1. Verifica se há formulário vinculado diretamente
             $row = $conn->fetchAssociative("
-                SELECT f.id
-                FROM formulario_dinamico f
+                SELECT f.id FROM formulario_dinamico f
                 JOIN formulario_dinamico_oportunidade fo ON fo.formulario_id = f.id
-                WHERE f.entidade = 'opportunity' AND f.ativo = true
-                  AND fo.oportunidade_id = ?
-                LIMIT 1
-            ", [$opportunityId]);
-
+                WHERE f.entidade='opportunity' AND f.status='published' AND fo.oportunidade_id=?
+                LIMIT 1", [$opportunityId]);
             if ($row) {
-                $forms = $this->getActiveForms();
+                $forms = $this->getPublishedForms();
                 foreach ($forms as $form) {
-                    if ($form->id == $row['id']) {
-                        return $form;
-                    }
+                    if ($form->id == $row['id']) return $form;
                 }
             }
-
-            // 2. Fallback: formulário padrão (sem vinculação específica)
             $row = $conn->fetchAssociative("
-                SELECT f.id
-                FROM formulario_dinamico f
-                WHERE f.entidade = 'opportunity' AND f.ativo = true
-                  AND NOT EXISTS (
-                    SELECT 1 FROM formulario_dinamico_oportunidade fo
-                    WHERE fo.formulario_id = f.id
-                  )
-                LIMIT 1
-            ");
-
+                SELECT f.id FROM formulario_dinamico f
+                WHERE f.entidade='opportunity' AND f.status='published'
+                AND NOT EXISTS (SELECT 1 FROM formulario_dinamico_oportunidade fo WHERE fo.formulario_id=f.id)
+                LIMIT 1");
             if ($row) {
-                $forms = $this->getActiveForms();
+                $forms = $this->getPublishedForms();
                 foreach ($forms as $form) {
-                    if ($form->id == $row['id']) {
-                        return $form;
-                    }
+                    if ($form->id == $row['id']) return $form;
                 }
             }
-        } catch (\Exception $e) {
-            return null;
-        }
-
+        } catch (\Exception $e) {}
         return null;
     }
 
-    /**
-     * Mapeia o tipo do formulário para o tipo de metadado do Mapas Culturais.
-     */
-    private function mapFieldType(string $type): string
-    {
-        $map = [
-            'text'       => 'string',
-            'textarea'   => 'text',
-            'number'     => 'string',
-            'email'      => 'string',
-            'url'        => 'string',
-            'date'       => 'date',
-            'datetime'   => 'date',
-            'phone'      => 'string',
-            'cep'        => 'string',
-            'cpf'        => 'string',
-            'cnpj'       => 'string',
-            'gender'     => 'select',
-            'select'     => 'select',
-            'multiselect'=> 'multiselect',
-        ];
-        return $map[$type] ?? 'string';
-    }
-
-    /**
-     * Retorna os campos nativos obrigatórios de uma entidade.
-     */
-    public function getNativeRequiredFields(string $entityType): array
+    public function getAllEntityFields(string $entityType): array
     {
         $app = App::i();
         $entityClass = self::ENTITY_MAP[$entityType] ?? null;
         if (!$entityClass) return [];
-
         $fields = [];
-        $registeredMetadata = $app->getRegisteredMetadata($entityClass);
-        foreach ($registeredMetadata as $key => $def) {
-            $validations = $def->_validations ?? [];
-            if (isset($validations['required'])) {
-                $fields[] = (object)[
-                    'key'         => $key,
-                    'rotulo'      => $def->label,
-                    'tipo'        => $def->type,
-                    'placeholder' => $def->placeholder ?? '',
-                    'obrigatorio' => true,
-                    'editavel'    => false,
-                    'nativo'      => true,
-                ];
-            }
+        foreach ($app->getRegisteredMetadata($entityClass) as $key => $def) {
+            $isRequired = $def->is_required ?? false;
+            $fields[] = (object)[
+                'key'         => $key,
+                'rotulo'      => $def->label,
+                'tipo'        => $def->type,
+                'placeholder' => $def->placeholder ?? '',
+                'obrigatorio' => $isRequired,
+                'editavel'    => !$isRequired,
+                'nativo'      => $isRequired,
+            ];
         }
-
         return $fields;
+    }
+
+    private function mapFieldType(string $type): string
+    {
+        $map = [
+            'text'=>'string','textarea'=>'text','number'=>'string','email'=>'string',
+            'url'=>'string','date'=>'date','datetime'=>'date','phone'=>'string',
+            'cep'=>'string','cpf'=>'string','cnpj'=>'string','gender'=>'select',
+            'select'=>'select','multiselect'=>'multiselect',
+        ];
+        return $map[$type] ?? 'string';
     }
 }
