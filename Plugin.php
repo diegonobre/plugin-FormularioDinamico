@@ -145,6 +145,58 @@ class Plugin extends \MapasCulturais\Plugin
             }
         });
 
+        // ================================================================
+        // Injeção no formulário de inscrição (Registration)
+        // ================================================================
+
+        // Edit mode (draft — usuário preenchendo a inscrição)
+        $app->hook("template(registration.edit).form:end", function () use ($app) {
+            $entity = $this->data->entity;
+            $opportunity = $entity->opportunity ?? null;
+            if (!$opportunity) return;
+            $form = self::$_instance ? self::$_instance->getFormForOpportunity($opportunity->id) : null;
+            if ($form) {
+                $this->part('dynamic-form-fields', [
+                    'form'   => $form,
+                    'entity' => $entity,
+                ]);
+                // Bridge: copia valores dos campos dinâmicos para o scope do Angular antes do save
+                echo '<script>
+                (function() {
+                    var checkInterval = setInterval(function() {
+                        if (window.$registrationScope && window.$registrationScope.saveRegistration) {
+                            clearInterval(checkInterval);
+                            var origSave = window.$registrationScope.saveRegistration;
+                            window.$registrationScope.saveRegistration = function() {
+                                var fields = document.querySelectorAll("[data-dynamic-form] input, [data-dynamic-form] select, [data-dynamic-form] textarea");
+                                fields.forEach(function(f) {
+                                    if (f.name && window.$registrationScope.data && window.$registrationScope.data.editableEntity) {
+                                        window.$registrationScope.data.editableEntity[f.name] = f.value;
+                                    }
+                                });
+                                return origSave.call(this);
+                            };
+                        }
+                    }, 200);
+                })();
+                </script>';
+            }
+        });
+
+        // View mode (após envio da inscrição — somente leitura)
+        $app->hook("template(registration.single).form:end", function () use ($app) {
+            $entity = $this->data->entity;
+            $opportunity = $entity->opportunity ?? null;
+            if (!$opportunity) return;
+            $form = self::$_instance ? self::$_instance->getFormForOpportunity($opportunity->id) : null;
+            if ($form) {
+                $this->part('dynamic-form-fields-display', [
+                    'form'   => $form,
+                    'entity' => $entity,
+                ]);
+            }
+        });
+
         // Validação no servidor
         foreach (['agent', 'space', 'event'] as $type) {
             $entityClass = self::ENTITY_MAP[$type];
@@ -166,6 +218,23 @@ class Plugin extends \MapasCulturais\Plugin
         $app->hook("entity(MapasCulturais\Entities\Opportunity).save:before", function () use ($app) {
             $entity = $this;
             $form = self::$_instance ? self::$_instance->getPublishedForm('opportunity') : null;
+            if (!$form) return;
+            foreach ($form->campos as $campo) {
+                if (!$campo->obrigatorio) continue;
+                $key = "{$form->slug}_{$campo->slug}";
+                $value = $entity->getMetadata($key);
+                if (empty($value)) {
+                    throw new BadRequest(i::__("O campo {$campo->rotulo} é obrigatório."));
+                }
+            }
+        });
+
+        // Validação para campos dinâmicos na inscrição (Registration)
+        $app->hook("entity(MapasCulturais\Entities\Registration).save:before", function () use ($app) {
+            $entity = $this;
+            $opportunity = $entity->opportunity ?? null;
+            if (!$opportunity) return;
+            $form = self::$_instance ? self::$_instance->getFormForOpportunity($opportunity->id) : null;
             if (!$form) return;
             foreach ($form->campos as $campo) {
                 if (!$campo->obrigatorio) continue;
@@ -207,6 +276,12 @@ class Plugin extends \MapasCulturais\Plugin
                     $cfg['options'] = $campo->opcoes;
                 }
                 $this->registerMetadata($entityClass, $key, $cfg);
+
+                // Para formulários de oportunidade, registra os mesmos metadados
+                // na entidade Registration para o formulário de inscrição
+                if ($form->entidade === 'opportunity') {
+                    $this->registerRegistrationMetadata($key, $cfg);
+                }
             }
         }
     }

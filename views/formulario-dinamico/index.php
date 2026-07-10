@@ -72,7 +72,7 @@ $this->import('mc-link mc-icon mc-card mc-modal');
 
                                 <?php if ($form->entidade === 'opportunity'): ?>
                                     <a class="btn btn-secondary btn-sm"
-                                       href="<?= $app->createUrl('formulario-dinamico', 'oportunidades', [$form->id]) ?>">
+                                       href="<?= $app->createUrl('formulario-dinamico', 'oportunities', [$form->id]) ?>">
                                         <mc-icon name="link"></mc-icon>
                                         <?= i::__('Vincular Oportunidades') ?>
                                     </a>

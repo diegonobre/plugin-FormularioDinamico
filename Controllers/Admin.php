@@ -321,7 +321,7 @@ class Admin extends \MapasCulturais\Controller
     // GET /formulario-dinamico/oportunidades
     // ================================================================
 
-    function GET_oportunidades()
+    function GET_oportunities()
     {
         $app = App::i();
         $this->requireAuthentication();
@@ -335,15 +335,22 @@ class Admin extends \MapasCulturais\Controller
         $formRow = $conn->fetchAssociative("SELECT * FROM formulario_dinamico WHERE id=?", [$id]);
         if (!$formRow) { $app->pass(); return; }
 
-        $linkedRows = $conn->fetchAllAssociative(
-            "SELECT fdo.id AS vinculo_id, fdo.oportunidade_id, o.name AS oportunidade_nome
-             FROM formulario_dinamico_oportunidade fdo
-             JOIN opportunity o ON o.id = fdo.oportunidade_id
-             WHERE fdo.formulario_id=?", [$id]
+        // Oportunidades já vinculadas
+        $linkedIds = $conn->fetchFirstColumn(
+            "SELECT oportunidade_id FROM formulario_dinamico_oportunidade WHERE formulario_id=?", [$id]
         );
+
+        $linkedMap = array_flip($linkedIds);
+
+        // Todas as oportunidades
+        $allOpportunities = $conn->fetchAllAssociative(
+            "SELECT o.id, o.name, o.status FROM opportunity o ORDER BY o.id DESC"
+        );
+
         $this->render('associar-oportunidade', [
-            'formulario' => $formRow,
-            'vinculos'   => $linkedRows,
+            'formulario'       => $formRow,
+            'oportunidades'    => $allOpportunities,
+            'linkedMap'        => $linkedMap,
         ]);
     }
 
@@ -369,7 +376,7 @@ class Admin extends \MapasCulturais\Controller
                 'oportunidade_id' => $opportunityId,
             ]);
         }
-        $app->redirect($app->baseUrl . 'formulario-dinamico/oportunidades?id=' . $formId);
+        $app->redirect($app->createUrl('formulario-dinamico', 'oportunities', ['id' => $formId]));
     }
 
     function POST_removerOportunidade()
@@ -380,13 +387,14 @@ class Admin extends \MapasCulturais\Controller
             throw new PermissionDenied($app->user, null, i::__('Gerenciar Formulários Dinâmicos'));
         }
         $conn = $app->em->getConnection();
-        $id = (int)($this->postData['id'] ?? 0);
-        if (!$id) return;
-        $vinculo = $conn->fetchAssociative("SELECT formulario_id FROM formulario_dinamico_oportunidade WHERE id=?", [$id]);
-        $formId = $vinculo ? (int)$vinculo['formulario_id'] : 0;
-        $conn->delete('formulario_dinamico_oportunidade', ['id' => $id]);
-        $redirect = $formId ? $app->baseUrl . 'formulario-dinamico/oportunidades?id=' . $formId : $app->baseUrl . 'formulario-dinamico';
-        $app->redirect($redirect);
+        $opportunityId = (int)($this->postData['id'] ?? 0);
+        $formId = (int)($this->postData['formulario_id'] ?? 0);
+        if (!$formId || !$opportunityId) return;
+        $conn->delete('formulario_dinamico_oportunidade', [
+            'formulario_id'   => $formId,
+            'oportunidade_id' => $opportunityId,
+        ]);
+        $app->redirect($app->createUrl('formulario-dinamico', 'oportunities', ['id' => $formId]));
     }
 
     // ================================================================
