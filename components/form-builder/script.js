@@ -34,18 +34,22 @@ app.component('form-builder', {
         fieldTypes() { return $MAPAS.formBuilderFieldTypes || []; },
 
         camposSerialized() {
-            return this.campos.map(c => ({
-                slug: c.slug,
-                rotulo: c.rotulo,
-                placeholder: c.placeholder,
-                tipo: c.tipo,
-                opcoes: c.opcoes,
-                obrigatorio: c.obrigatorio,
-                coluna_span: c.coluna_span,
-                editavel: c.editavel !== false,
-                grupo_id: c.grupo_id !== undefined ? c.grupo_id : this.activeGroupId,
-                grupo_titulo: this.getGrupoTitle(c.grupo_id !== undefined ? c.grupo_id : this.activeGroupId),
-            }));
+            return this.campos.map(c => {
+                const gid = c.grupo_id !== undefined ? c.grupo_id : this.activeGroupId;
+                return {
+                    slug: c.slug,
+                    rotulo: c.rotulo,
+                    placeholder: c.placeholder,
+                    tipo: c.tipo,
+                    opcoes: c.opcoes,
+                    obrigatorio: c.obrigatorio,
+                    coluna_span: c.coluna_span,
+                    editavel: c.editavel !== false,
+                    grupo_id: gid,
+                    grupo_titulo: this.getGrupoTitle(gid),
+                    grupo_colunas: this.getGrupoColunas(gid),
+                };
+            });
         },
 
         grupoIds() { return this.grupos.map(g => g.id).join(','); },
@@ -83,6 +87,35 @@ app.component('form-builder', {
         getGrupoTitle(gid) {
             const g = this.grupos.find(x => x.id === gid);
             return g ? g.titulo : 'Geral';
+        },
+
+        getGrupoColunas(gid) {
+            const g = this.grupos.find(x => x.id === gid);
+            return g && g.colunas ? Math.min(Math.max(parseInt(g.colunas), 1), 4) : 1;
+        },
+
+        selectGroup(gid) {
+            this.activeGroupId = gid;
+            this.$nextTick(() => {
+                const el = document.querySelector('.form-builder__grupo[data-gid="' + gid + '"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        },
+
+        grupoGridStyle(g) {
+            return {
+                display: 'grid',
+                gridTemplateColumns: 'repeat(' + (this.getGrupoColunas(g.id) * 12) + ', 1fr)',
+                gap: '0.5rem',
+            };
+        },
+
+        fieldSpanStyle(campo, g) {
+            const total = this.getGrupoColunas(g.id) * 12;
+            const span = Math.min(Math.max(parseInt(campo.coluna_span) || 12, 1), total);
+            return { gridColumn: 'span ' + span };
         },
 
         camposInGroup(gid) {

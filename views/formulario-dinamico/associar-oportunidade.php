@@ -17,6 +17,7 @@ $formulario = $formulario ?? [];
 $oportunidades = $oportunidades ?? [];
 $linkedMap = $linkedMap ?? [];
 $formId = (int)($formulario['id'] ?? 0);
+$isDraft = ($formulario['status'] ?? '') !== 'published';
 ?>
 <div class="entity-form">
     <header class="entity-form__header">
@@ -31,6 +32,13 @@ $formId = (int)($formulario['id'] ?? 0);
     <p class="entity-form__help">
         <?= i::__('Cada oportunidade pode ter apenas um formulário vinculado. Os campos do formulário passam a fazer parte do formulário de inscrição da oportunidade.') ?>
     </p>
+
+    <?php if ($isDraft): ?>
+        <div class="fd-alert fd-alert--warning">
+            <strong><?= i::__('Formulário em rascunho:') ?></strong>
+            <?= i::__('os campos só serão adicionados ao formulário de inscrição das oportunidades vinculadas depois que este formulário for publicado, na listagem de formulários.') ?>
+        </div>
+    <?php endif; ?>
 
     <div class="entity-list__table" style="margin-top:1rem;">
         <?php if (empty($oportunidades)): ?>
@@ -72,7 +80,9 @@ $formId = (int)($formulario['id'] ?? 0);
                                         action="<?= $app->createUrl('formulario-dinamico', 'associarOportunidade') ?>"
                                         :fields='{"formulario_id": <?= $formId ?>, "oportunidade_id": <?= $opId ?>}'
                                         title="<?= htmlspecialchars(i::__('Confirmar vínculo'), ENT_QUOTES) ?>"
-                                        message="<?= htmlspecialchars(sprintf(i::__('Vincular o formulário à oportunidade "%s"? Os campos serão adicionados ao formulário de inscrição e um vínculo anterior, se existir, será substituído.'), $opName), ENT_QUOTES) ?>"
+                                        message="<?= htmlspecialchars(sprintf($isDraft
+                                            ? i::__('Vincular o formulário à oportunidade "%s"? Um vínculo anterior, se existir, será substituído. Como o formulário ainda é um rascunho, os campos só aparecerão na inscrição após a publicação.')
+                                            : i::__('Vincular o formulário à oportunidade "%s"? Os campos serão adicionados ao formulário de inscrição e um vínculo anterior, se existir, será substituído.'), $opName), ENT_QUOTES) ?>"
                                         yes="<?= htmlspecialchars(i::__('Vincular'), ENT_QUOTES) ?>"
                                         no="<?= htmlspecialchars(i::__('Cancelar'), ENT_QUOTES) ?>"
                                         icon="add"

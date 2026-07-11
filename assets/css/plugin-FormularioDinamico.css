@@ -384,6 +384,19 @@
     padding: 1rem 0;
 }
 
+/* --- Alertas --- */
+.fd-alert {
+    border-radius: 4px;
+    margin: 1rem 0 0;
+    padding: 0.75rem 1rem;
+}
+
+.fd-alert--warning {
+    background: #fff3cd;
+    border: 1px solid #ffe69c;
+    color: #664d03;
+}
+
 /* --- Confirmação (mc-modal / vue-final-modal) --- */
 /* Overlay levemente acinzentado e desfocado atrás dos modais de confirmação */
 .vfm .vfm__overlay.vfm--overlay {
@@ -579,14 +592,32 @@
     white-space: nowrap;
 }
 
+/* o display:grid e as colunas são definidos inline pelo componente
+   (grupoGridStyle), de acordo com o número de colunas do grupo */
 .form-builder__grupo-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
     min-height: 40px;
     padding: 0.25rem;
     border-radius: 4px;
     background: rgba(0,0,0,0.02);
+}
+
+/* permite os itens encolherem dentro das colunas do grid */
+.form-builder__grupo-fields .form-builder__field-item {
+    min-width: 0;
+    align-content: flex-start;
+}
+
+.form-builder__grupo-fields .form-builder__field-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.form-builder__grupo-fields .form-builder__field-header {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
 }
 
 .form-builder__grupo-empty {

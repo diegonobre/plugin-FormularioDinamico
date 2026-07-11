@@ -1,0 +1,45 @@
+/* ============================================================
+   Formulários Dinâmicos — grid de colunas dos grupos no
+   formulário de inscrição (registration-form)
+
+   A seção materializada guarda o número de colunas do grupo em
+   config.formulario_dinamico.colunas (1-4) e cada campo guarda a
+   largura em config.formulario_dinamico.span (1-12). O grid usa
+   12 frações por coluna do grupo, então um campo com span 12
+   ocupa exatamente uma coluna do grupo.
+   ============================================================ */
+
+.fd-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    column-gap: 1.5rem;
+}
+
+.fd-fields-grid--cols-2 { grid-template-columns: repeat(24, 1fr); }
+.fd-fields-grid--cols-3 { grid-template-columns: repeat(36, 1fr); }
+.fd-fields-grid--cols-4 { grid-template-columns: repeat(48, 1fr); }
+
+.fd-fields-grid > * {
+    grid-column: span 12;
+    min-width: 0;
+}
+
+.fd-fields-grid > .fd-span-1  { grid-column: span 1; }
+.fd-fields-grid > .fd-span-2  { grid-column: span 2; }
+.fd-fields-grid > .fd-span-3  { grid-column: span 3; }
+.fd-fields-grid > .fd-span-4  { grid-column: span 4; }
+.fd-fields-grid > .fd-span-5  { grid-column: span 5; }
+.fd-fields-grid > .fd-span-6  { grid-column: span 6; }
+.fd-fields-grid > .fd-span-7  { grid-column: span 7; }
+.fd-fields-grid > .fd-span-8  { grid-column: span 8; }
+.fd-fields-grid > .fd-span-9  { grid-column: span 9; }
+.fd-fields-grid > .fd-span-10 { grid-column: span 10; }
+.fd-fields-grid > .fd-span-11 { grid-column: span 11; }
+.fd-fields-grid > .fd-span-12 { grid-column: span 12; }
+
+/* Em telas estreitas cada campo ocupa a linha inteira */
+@media (max-width: 800px) {
+    .fd-fields-grid > * {
+        grid-column: 1 / -1;
+    }
+}

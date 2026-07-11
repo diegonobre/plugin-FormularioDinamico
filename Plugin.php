@@ -55,6 +55,8 @@ class Plugin extends \MapasCulturais\Plugin
             $iconset['form'] = 'cil:notes';
             $iconset['form-field'] = 'cil:input';
             $iconset['form-builder'] = 'cil:pencil';
+            $iconset['form-report'] = 'cil:chart';
+            $iconset['arrowBack'] = $iconset['arrowBack'] ?? 'cil:arrow-left';
         });
 
         // Nav: "Formulários" no admin (saasSuperAdmin)
@@ -113,6 +115,11 @@ class Plugin extends \MapasCulturais\Plugin
         // Assets
         $app->hook('GET(formulario-dinamico.<<*>>)', function () use ($app) {
             $app->view->enqueueStyle('app-v2', 'formulario-dinamico', 'css/plugin-FormularioDinamico.css');
+        });
+
+        // Grid de colunas dos grupos no formulário de inscrição
+        $app->hook('GET(registration.<<*>>)', function () use ($app) {
+            $app->view->enqueueStyle('app-v2', 'fd-registration-form', 'css/fd-registration-form.css');
         });
     }
 
@@ -191,6 +198,7 @@ class Plugin extends \MapasCulturais\Plugin
                 editavel BOOLEAN DEFAULT true,
                 grupo_id INTEGER DEFAULT 0,
                 grupo_titulo VARCHAR(255) DEFAULT '',
+                grupo_colunas INTEGER DEFAULT 1,
                 UNIQUE(formulario_id, slug)
             );
             CREATE INDEX IF NOT EXISTS idx_fdc_ordem ON formulario_dinamico_campo(formulario_id, ordem);
@@ -213,6 +221,7 @@ class Plugin extends \MapasCulturais\Plugin
             "ALTER TABLE formulario_dinamico ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true",
             "ALTER TABLE formulario_dinamico_campo ADD COLUMN IF NOT EXISTS grupo_id INTEGER DEFAULT 0",
             "ALTER TABLE formulario_dinamico_campo ADD COLUMN IF NOT EXISTS grupo_titulo VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE formulario_dinamico_campo ADD COLUMN IF NOT EXISTS grupo_colunas INTEGER DEFAULT 1",
             "UPDATE formulario_dinamico SET status = 'published' WHERE status IS NULL OR status = ''",
             "UPDATE formulario_dinamico SET ativo = true WHERE ativo IS NULL",
             // garante uma oportunidade por formulário de inscrição
@@ -255,7 +264,7 @@ class Plugin extends \MapasCulturais\Plugin
                        c.id AS campo_id, c.slug AS campo_slug,
                        c.rotulo, c.placeholder, c.tipo,
                        c.opcoes, c.obrigatorio, c.coluna_span, c.ordem, c.editavel,
-                       c.grupo_id, c.grupo_titulo
+                       c.grupo_id, c.grupo_titulo, c.grupo_colunas
                 FROM formulario_dinamico f
                 JOIN formulario_dinamico_campo c ON c.formulario_id = f.id
                 $where
@@ -291,6 +300,7 @@ class Plugin extends \MapasCulturais\Plugin
                 'ordem'       => (int)$row['ordem'],
                 'grupo_id'    => (int)$row['grupo_id'],
                 'grupo_titulo'=> $row['grupo_titulo'] ?? '',
+                'grupo_colunas'=> max(1, (int)($row['grupo_colunas'] ?? 1)),
             ];
         }
 
@@ -501,7 +511,8 @@ class Plugin extends \MapasCulturais\Plugin
         foreach ($form->campos as $campo) {
             $gid = (int)($campo->grupo_id ?? 0);
             $gtitulo = trim((string)($campo->grupo_titulo ?? '')) ?: i::__('Geral');
-            if ($currentGroup !== $gid && ($groupCount > 1 || strcasecmp($gtitulo, 'Geral') !== 0)) {
+            $gcolunas = min(max((int)($campo->grupo_colunas ?? 1), 1), 4);
+            if ($currentGroup !== $gid && ($groupCount > 1 || $gcolunas > 1 || strcasecmp($gtitulo, 'Geral') !== 0)) {
                 $desired[] = [
                     'ref'          => "section_{$gid}",
                     'fieldType'    => 'section',
@@ -509,6 +520,7 @@ class Plugin extends \MapasCulturais\Plugin
                     'description'  => null,
                     'required'     => false,
                     'fieldOptions' => [],
+                    'extra'        => ['colunas' => $gcolunas],
                 ];
             }
             $currentGroup = $gid;
@@ -525,6 +537,7 @@ class Plugin extends \MapasCulturais\Plugin
                 'description'  => $campo->placeholder ?: null,
                 'required'     => (bool)$campo->obrigatorio,
                 'fieldOptions' => $opcoes,
+                'extra'        => ['span' => min(max((int)($campo->coluna_span ?: 12), 1), 12)],
             ];
         }
 
@@ -545,10 +558,10 @@ class Plugin extends \MapasCulturais\Plugin
             $rfc->displayOrder = $order;
             $rfc->step = $step->id;
             $rfc->config = array_merge((array)($rfc->config ?: []), [
-                'formulario_dinamico' => [
+                'formulario_dinamico' => array_merge([
                     'form_id' => (int)$form->id,
                     'ref'     => $d['ref'],
-                ],
+                ], $d['extra'] ?? []),
             ]);
             $rfc->save();
             $seen[$d['ref']] = true;
@@ -606,6 +619,207 @@ class Plugin extends \MapasCulturais\Plugin
                 $this->removeOpportunityRegistrationFields($opportunityId, $formId);
             }
         }
+    }
+
+    // ================================================================
+    // Relatórios — coleta dos dados preenchidos
+    // ================================================================
+
+    /**
+     * Rótulos de status das linhas do relatório.
+     */
+    const STATUS_LABELS = [
+        -10 => 'Lixeira',
+        -2  => 'Inválida',
+        -1  => 'Não selecionada',
+        0   => 'Rascunho',
+        1   => 'Enviada/Ativa',
+        2   => 'Suplente',
+        8   => 'Selecionada',
+        10  => 'Aprovada',
+    ];
+
+    /**
+     * Retorna os dados coletados pelo formulário.
+     *
+     * Para formulários de agent/space/event, cada linha é uma entidade que
+     * preencheu ao menos um campo (valores lidos de {entidade}_meta, chave
+     * "{form_slug}_{campo_slug}").
+     *
+     * Para formulários de opportunity, cada linha é uma inscrição das
+     * oportunidades vinculadas (valores lidos de registration_meta, chave
+     * "field_{id}" dos campos materializados).
+     *
+     * @return array ['columns' => [slug => rotulo], 'rows' => [ [
+     *   '_id', '_label', '_status', '_status_label', '_date', 'values' => [slug => valor]
+     * ] ]]
+     */
+    public function getFormSubmissions(object $form): array
+    {
+        $columns = [];
+        foreach ($form->campos as $campo) {
+            $columns[$campo->slug] = $campo->rotulo;
+        }
+
+        if ($form->entidade === 'opportunity') {
+            $rows = $this->getOpportunitySubmissions($form);
+        } else {
+            $rows = $this->getEntitySubmissions($form);
+        }
+
+        return ['columns' => $columns, 'rows' => $rows];
+    }
+
+    /**
+     * Retorna uma única linha do relatório (para a visão de item/PDF).
+     */
+    public function getFormSubmission(object $form, int $itemId): ?array
+    {
+        $data = $this->getFormSubmissions($form);
+        foreach ($data['rows'] as $row) {
+            if ((int)$row['_id'] === $itemId) {
+                return ['columns' => $data['columns'], 'row' => $row];
+            }
+        }
+        return null;
+    }
+
+    private function getEntitySubmissions(object $form): array
+    {
+        $app = App::i();
+        $conn = $app->em->getConnection();
+
+        $tables = [
+            'agent' => ['agent', 'agent_meta'],
+            'space' => ['space', 'space_meta'],
+            'event' => ['event', 'event_meta'],
+        ];
+        [$table, $metaTable] = $tables[$form->entidade] ?? [null, null];
+        if (!$table) return [];
+
+        try {
+            $rows = $conn->fetchAllAssociative("
+                SELECT e.id, e.name, e.status, e.create_timestamp, m.key, m.value
+                FROM {$metaTable} m
+                JOIN {$table} e ON e.id = m.object_id
+                WHERE m.key LIKE ? AND e.status > -10
+                ORDER BY e.id
+            ", [$form->slug . '\_%']);
+        } catch (\Exception $e) {
+            return [];
+        }
+
+        $prefixLen = strlen($form->slug) + 1;
+        $result = [];
+        foreach ($rows as $row) {
+            $id = (int)$row['id'];
+            if (!isset($result[$id])) {
+                $result[$id] = [
+                    '_id'           => $id,
+                    '_label'        => $row['name'],
+                    '_status'       => (int)$row['status'],
+                    '_status_label' => self::STATUS_LABELS[(int)$row['status']] ?? $row['status'],
+                    '_date'         => $row['create_timestamp'],
+                    'values'        => [],
+                ];
+            }
+            $slug = substr($row['key'], $prefixLen);
+            $result[$id]['values'][$slug] = $this->formatMetaValue($row['value']);
+        }
+
+        return array_values($result);
+    }
+
+    private function getOpportunitySubmissions(object $form): array
+    {
+        $app = App::i();
+        $conn = $app->em->getConnection();
+
+        $opportunityIds = $this->getLinkedOpportunityIds((int)$form->id);
+        if (!$opportunityIds) return [];
+
+        $in = implode(',', array_map('intval', $opportunityIds));
+
+        // mapa field_{id} => campo_slug, a partir dos campos materializados
+        $fieldMap = [];
+        try {
+            $rfcs = $conn->fetchAllAssociative("
+                SELECT id, config FROM registration_field_configuration
+                WHERE opportunity_id IN ({$in}) AND field_type != 'section'
+            ");
+        } catch (\Exception $e) {
+            return [];
+        }
+        foreach ($rfcs as $rfc) {
+            $config = $rfc['config'] ? json_decode($rfc['config'], true) : [];
+            $meta = $config['formulario_dinamico'] ?? null;
+            if ($meta && (int)($meta['form_id'] ?? 0) === (int)$form->id && str_starts_with($meta['ref'] ?? '', 'campo_')) {
+                $fieldMap['field_' . $rfc['id']] = substr($meta['ref'], strlen('campo_'));
+            }
+        }
+        if (!$fieldMap) return [];
+
+        try {
+            $registrations = $conn->fetchAllAssociative("
+                SELECT r.id, r.number, r.status, r.sent_timestamp, r.create_timestamp,
+                       r.opportunity_id, a.name AS agent_name, o.name AS opportunity_name
+                FROM registration r
+                JOIN agent a ON a.id = r.agent_id
+                JOIN opportunity o ON o.id = r.opportunity_id
+                WHERE r.opportunity_id IN ({$in}) AND r.status > -10
+                ORDER BY r.create_timestamp DESC
+            ");
+        } catch (\Exception $e) {
+            return [];
+        }
+        if (!$registrations) return [];
+
+        $regIds = implode(',', array_map(fn($r) => (int)$r['id'], $registrations));
+        $keysIn = implode(',', array_map(fn($k) => $conn->quote($k), array_keys($fieldMap)));
+        $metaRows = $conn->fetchAllAssociative("
+            SELECT object_id, key, value FROM registration_meta
+            WHERE object_id IN ({$regIds}) AND key IN ({$keysIn})
+        ");
+        $metaByReg = [];
+        foreach ($metaRows as $m) {
+            $slug = $fieldMap[$m['key']] ?? null;
+            if ($slug) {
+                $metaByReg[(int)$m['object_id']][$slug] = $this->formatMetaValue($m['value']);
+            }
+        }
+
+        $result = [];
+        foreach ($registrations as $reg) {
+            $id = (int)$reg['id'];
+            $result[] = [
+                '_id'           => $id,
+                '_label'        => trim(($reg['number'] ?: $id) . ' — ' . $reg['agent_name']),
+                '_status'       => (int)$reg['status'],
+                '_status_label' => self::STATUS_LABELS[(int)$reg['status']] ?? $reg['status'],
+                '_date'         => $reg['sent_timestamp'] ?: $reg['create_timestamp'],
+                '_opportunity'  => $reg['opportunity_name'],
+                'values'        => $metaByReg[$id] ?? [],
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Normaliza o valor bruto do metadado para exibição/exportação.
+     * Valores de multiselect/checkboxes são armazenados como JSON.
+     */
+    private function formatMetaValue(?string $value): string
+    {
+        if ($value === null || $value === '') return '';
+        $decoded = json_decode($value, true);
+        if (is_array($decoded)) {
+            return implode('; ', array_map(
+                fn($v) => is_scalar($v) ? (string)$v : json_encode($v, JSON_UNESCAPED_UNICODE),
+                $decoded
+            ));
+        }
+        return $value;
     }
 
     // ================================================================

@@ -28,8 +28,9 @@ foreach ($form->campos as $campo) {
     $gid = (int)($campo->grupo_id ?? 0);
     if (!isset($grupos[$gid])) {
         $grupos[$gid] = [
-            'titulo' => trim((string)($campo->grupo_titulo ?? '')) ?: i::__('Geral'),
-            'campos' => [],
+            'titulo'  => trim((string)($campo->grupo_titulo ?? '')) ?: i::__('Geral'),
+            'colunas' => min(max((int)($campo->grupo_colunas ?? 1), 1), 4),
+            'campos'  => [],
         ];
     }
     $grupos[$gid]['campos'][] = $campo;
@@ -48,13 +49,15 @@ foreach ($form->campos as $campo) {
                         <label><?= htmlspecialchars($grupo['titulo']) ?></label>
                     </template>
                     <template #content>
-                        <div class="grid-12">
+                        <?php $total = $grupo['colunas'] * 12; ?>
+                        <div class="dynamic-form-tab__grid" style="display:grid;grid-template-columns:repeat(<?= $total ?>,1fr);column-gap:1.5rem;">
                             <?php foreach ($grupo['campos'] as $campo):
                                 $key = "{$form->slug}_{$campo->slug}";
-                                $span = min(max((int)($campo->coluna_span ?: 12), 1), 12);
-                                $classes = $span >= 12 ? 'col-12' : "col-{$span} sm:col-12";
+                                $span = min(max((int)($campo->coluna_span ?: 12), 1), $total);
                             ?>
-                                <entity-field :entity="entity" classes="<?= $classes ?>" prop="<?= htmlspecialchars($key, ENT_QUOTES) ?>"></entity-field>
+                                <div style="grid-column: span <?= $span ?>; min-width:0;">
+                                    <entity-field :entity="entity" prop="<?= htmlspecialchars($key, ENT_QUOTES) ?>"></entity-field>
+                                </div>
                             <?php endforeach; ?>
                         </div>
                     </template>
@@ -68,5 +71,12 @@ foreach ($form->campos as $campo) {
 .dynamic-form-tab__desc {
     color: #666;
     margin: 0 0 1rem;
+}
+
+/* em telas estreitas cada campo ocupa a linha inteira */
+@media (max-width: 800px) {
+    .dynamic-form-tab__grid > * {
+        grid-column: 1 / -1 !important;
+    }
 }
 </style>

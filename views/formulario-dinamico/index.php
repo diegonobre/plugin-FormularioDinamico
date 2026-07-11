@@ -82,6 +82,12 @@ $this->import('
                                     </a>
                                 <?php endif; ?>
 
+                                <a class="button button--text button--sm button--icon"
+                                   href="<?= $app->createUrl('formulario-dinamico', 'relatorio', ['id' => $form->id]) ?>">
+                                    <mc-icon name="form-report"></mc-icon>
+                                    <?= i::__('Relatório') ?>
+                                </a>
+
                                 <fd-confirm-action
                                     action="<?= $app->createUrl('formulario-dinamico', 'excluir') ?>"
                                     :fields='{"id": <?= (int)$form->id ?>}'

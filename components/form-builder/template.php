@@ -35,6 +35,21 @@
     <div class="form-builder__layout">
         <!-- Toolbox -->
         <div class="form-builder__toolbox">
+            <h4><?php \MapasCulturais\i::_e('Grupos') ?></h4>
+            <div class="form-builder__toolbox-groups">
+                <div v-for="(g, gidx) in grupos" :key="g.id"
+                     class="form-builder__toolbox-group"
+                     :class="{'form-builder__toolbox-group--active': activeGroupId === g.id}"
+                     @click="selectGroup(g.id)">
+                    <span>{{ g.titulo }}</span>
+                    <span class="badge badge-secondary">{{ countCamposInGroup(g.id) }}</span>
+                </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" @click="addGroup" style="margin-top:0.5rem;width:100%;">
+                + <?php \MapasCulturais\i::_e('Grupo') ?>
+            </button>
+
+            <hr style="margin:0.75rem 0">
             <h4><?php \MapasCulturais\i::_e('Campos Disponíveis') ?></h4>
             <p class="form-builder__hint"><?php \MapasCulturais\i::_e('Clique ou arraste para adicionar') ?></p>
             <div class="form-builder__toolbox-list">
@@ -45,21 +60,6 @@
                     <span>{{ ft.label }}</span>
                 </div>
             </div>
-
-            <hr style="margin:0.75rem 0">
-            <h4><?php \MapasCulturais\i::_e('Grupos') ?></h4>
-            <div class="form-builder__toolbox-groups">
-                <div v-for="(g, gidx) in grupos" :key="g.id"
-                     class="form-builder__toolbox-group"
-                     :class="{'form-builder__toolbox-group--active': activeGroupId === g.id}"
-                     @click="activeGroupId = g.id">
-                    <span>{{ g.titulo }}</span>
-                    <span class="badge badge-secondary">{{ countCamposInGroup(g.id) }}</span>
-                </div>
-            </div>
-            <button type="button" class="btn btn-sm btn-secondary" @click="addGroup" style="margin-top:0.5rem;width:100%;">
-                + <?php \MapasCulturais\i::_e('Grupo') ?>
-            </button>
         </div>
 
         <!-- Canvas -->
@@ -101,11 +101,12 @@
                     </div>
                 </div>
 
-                <div class="form-builder__grupo-fields">
+                <div class="form-builder__grupo-fields" :style="grupoGridStyle(g)">
                     <div v-for="(campo, idx) in camposInGroup(g.id)" :key="campo._uid"
                          :data-uid="campo._uid"
                          class="form-builder__field-item"
-                         :class="{'form-builder__field-item--editing': editingIndex === campo._uid}">
+                         :class="{'form-builder__field-item--editing': editingIndex === campo._uid}"
+                         :style="fieldSpanStyle(campo, g)">
                         <div class="form-builder__field-header">
                             <span class="form-builder__field-grip">&#x2630;</span>
                             <span class="form-builder__field-label">{{ campo.rotulo || '<?php \MapasCulturais\i::_e('Novo campo') ?>' }}</span>
@@ -120,7 +121,7 @@
                             <small><?php \MapasCulturais\i::_e('Largura') ?>: {{ campo.coluna_span }}/{{ g.colunas*12 }}</small>
                         </div>
                     </div>
-                    <div v-if="camposInGroup(g.id).length === 0" class="form-builder__grupo-empty">
+                    <div v-if="camposInGroup(g.id).length === 0" class="form-builder__grupo-empty" style="grid-column: 1 / -1;">
                         <small><?php \MapasCulturais\i::_e('Arraste campos para cá') ?></small>
                     </div>
                 </div>

@@ -163,8 +163,9 @@ class Admin extends \MapasCulturais\Controller
         foreach ($campoRows as $c) {
             $gid = (int)($c['grupo_id'] ?? 0);
             $gtitulo = $c['grupo_titulo'] ?? '';
+            $gcolunas = max(1, (int)($c['grupo_colunas'] ?? 1));
             if (!isset($grupos[$gid])) {
-                $grupos[$gid] = ['id' => $gid, 'titulo' => $gtitulo ?: 'Geral', 'colunas' => 1];
+                $grupos[$gid] = ['id' => $gid, 'titulo' => $gtitulo ?: 'Geral', 'colunas' => $gcolunas];
             }
             $campos[] = [
                 'slug'        => $c['slug'],
@@ -464,6 +465,148 @@ class Admin extends \MapasCulturais\Controller
     }
 
     // ================================================================
+    // Relatórios e exportação
+    // ================================================================
+
+    /**
+     * GET /formulario-dinamico/relatorio?id={formId}
+     * Lista os dados coletados pelo formulário.
+     */
+    function GET_relatorio()
+    {
+        $form = $this->requireFormForReport();
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        $data = $plugin->getFormSubmissions($form);
+
+        $this->render('relatorio', [
+            'formulario' => $form,
+            'columns'    => $data['columns'],
+            'rows'       => $data['rows'],
+        ]);
+    }
+
+    /**
+     * GET /formulario-dinamico/exportar?id={formId}&formato=csv|xlsx
+     * Exporta todos os dados coletados.
+     */
+    function GET_exportar()
+    {
+        $form = $this->requireFormForReport();
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        $data = $plugin->getFormSubmissions($form);
+        $formato = strtolower(trim($this->data['formato'] ?? 'csv'));
+
+        $filename = $form->slug . '-' . date('Ymd-His');
+        $header = array_merge(
+            ['ID', i::__('Identificação'), i::__('Status'), i::__('Data')],
+            $form->entidade === 'opportunity' ? [i::__('Oportunidade')] : [],
+            array_values($data['columns'])
+        );
+
+        $lines = [];
+        foreach ($data['rows'] as $row) {
+            $line = [$row['_id'], $row['_label'], $row['_status_label'], $row['_date']];
+            if ($form->entidade === 'opportunity') {
+                $line[] = $row['_opportunity'] ?? '';
+            }
+            foreach (array_keys($data['columns']) as $slug) {
+                $line[] = $row['values'][$slug] ?? '';
+            }
+            $lines[] = $line;
+        }
+
+        if ($formato === 'xlsx') {
+            $this->outputXlsx($filename, $header, $lines);
+        } else {
+            $this->outputCsv($filename, $header, $lines);
+        }
+    }
+
+    /**
+     * GET /formulario-dinamico/relatorioItem?id={formId}&item={itemId}
+     * Página imprimível de um item individual (usar "Salvar como PDF" do navegador).
+     */
+    function GET_relatorioItem()
+    {
+        $form = $this->requireFormForReport();
+        $itemId = (int)($this->data['item'] ?? 0);
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        $data = $itemId ? $plugin->getFormSubmission($form, $itemId) : null;
+
+        if (!$data) {
+            App::i()->pass();
+            return;
+        }
+
+        $this->render('relatorio-item', [
+            'formulario' => $form,
+            'columns'    => $data['columns'],
+            'row'        => $data['row'],
+        ]);
+    }
+
+    /**
+     * Carrega o formulário e verifica permissão para as telas de relatório.
+     */
+    private function requireFormForReport(): object
+    {
+        $app = App::i();
+        $this->requireAuthentication();
+        if (!$app->user->is('saasSuperAdmin')) {
+            throw new PermissionDenied($app->user, null, i::__('Gerenciar Formulários Dinâmicos'));
+        }
+        $id = (int)($this->data['id'] ?? 0);
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        $form = $id && $plugin ? $plugin->getFormById($id) : null;
+        if (!$form) {
+            $app->pass();
+        }
+        return $form;
+    }
+
+    private function outputCsv(string $filename, array $header, array $lines): void
+    {
+        $app = App::i();
+        while (ob_get_level()) { ob_end_clean(); }
+        header('Content-Type: text/csv; charset=UTF-8');
+        header("Content-Disposition: attachment; filename=\"{$filename}.csv\"");
+        $out = fopen('php://output', 'w');
+        // BOM para o Excel reconhecer UTF-8; ponto-e-vírgula para locale pt-BR
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, $header, ';');
+        foreach ($lines as $line) {
+            fputcsv($out, $line, ';');
+        }
+        fclose($out);
+        exit;
+    }
+
+    private function outputXlsx(string $filename, array $header, array $lines): void
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle(mb_substr(i::__('Dados coletados'), 0, 31));
+
+        $sheet->fromArray($header, null, 'A1');
+        $sheet->getStyle('A1:' . \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($header)) . '1')
+            ->getFont()->setBold(true);
+        if ($lines) {
+            $sheet->fromArray($lines, null, 'A2');
+        }
+        foreach (range(1, count($header)) as $i) {
+            $sheet->getColumnDimension(\PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i))
+                ->setAutoSize(true);
+        }
+
+        while (ob_get_level()) { ob_end_clean(); }
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header("Content-Disposition: attachment; filename=\"{$filename}.xlsx\"");
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+        $writer->save('php://output');
+        exit;
+    }
+
+    // ================================================================
     // Utilitários
     // ================================================================
 
@@ -485,6 +628,7 @@ class Admin extends \MapasCulturais\Controller
                 'editavel'      => (isset($campo['editavel']) && !$campo['editavel']) ? 'f' : 't',
                 'grupo_id'      => (int)($campo['grupo_id'] ?? 0),
                 'grupo_titulo'  => $campo['grupo_titulo'] ?? '',
+                'grupo_colunas' => min(max((int)($campo['grupo_colunas'] ?? 1), 1), 4),
             ]);
         }
     }
