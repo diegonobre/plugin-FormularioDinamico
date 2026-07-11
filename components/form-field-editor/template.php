@@ -6,6 +6,9 @@
             <button type="button" class="btn btn-sm btn-secondary" @click="$emit('cancel')">&#x2716;</button>
         </div>
         <div class="form-field-editor__body">
+            <div v-if="errors.length" class="form-field-editor__errors" role="alert">
+                <p v-for="(error, idx) in errors" :key="idx">{{ error }}</p>
+            </div>
             <div class="form-field-editor__field">
                 <label><?php \MapasCulturais\i::_e('Rótulo') ?></label>
                 <input type="text" v-model="edit.rotulo" class="input-text" @input="autoSlug">

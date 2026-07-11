@@ -108,24 +108,28 @@ class Admin extends \MapasCulturais\Controller
         ]);
         $formId = (int)$conn->lastInsertId();
 
-        // Pré-popula com TODOS os campos da entidade
+        // Pré-popula com os campos realmente visíveis no app para a entidade
+        // (extraídos das views de edição do tema ativo, agrupados por aba).
         $plugin = \FormularioDinamico\Plugin::getInstance();
         if ($plugin) {
-            $allFields = $plugin->getAllEntityFields($entidade);
-            $this->saveCampos($formId, array_map(function ($f, $idx) {
+            $fields = $plugin->getVisibleEntityFields($entidade);
+            if (empty($fields)) {
+                $fields = $plugin->getAllEntityFields($entidade);
+            }
+            $this->saveCampos($formId, array_map(function ($f) {
                 return [
                     'slug'        => $f->key,
                     'rotulo'      => $f->rotulo,
                     'placeholder' => $f->placeholder,
                     'tipo'        => $f->tipo,
-                    'opcoes'      => [],
+                    'opcoes'      => $f->opcoes ?? [],
                     'obrigatorio' => $f->obrigatorio,
                     'coluna_span' => 12,
                     'editavel'    => $f->editavel,
-                    'grupo_id'    => 0,
-                    'grupo_titulo'=> 'Geral',
+                    'grupo_id'    => $f->grupo_id ?? 0,
+                    'grupo_titulo'=> $f->grupo_titulo ?? 'Geral',
                 ];
-            }, $allFields, array_keys($allFields)));
+            }, $fields));
         }
 
         $app->redirect($app->baseUrl . 'formulario-dinamico/editar?id=' . $formId);
@@ -183,6 +187,11 @@ class Admin extends \MapasCulturais\Controller
         $plugin = \FormularioDinamico\Plugin::getInstance();
         $entityClass = \FormularioDinamico\Plugin::ENTITY_MAP[$formRow['entidade']] ?? null;
         $nativeFields = [];
+        // Formulários de oportunidade viram campos do formulário de inscrição;
+        // os metadados obrigatórios da entidade Opportunity não se aplicam lá.
+        if ($formRow['entidade'] === 'opportunity') {
+            $entityClass = null;
+        }
         if ($plugin && $entityClass) {
             foreach ($app->getRegisteredMetadata($entityClass) as $key => $def) {
                 if ($def->is_required ?? false) {
@@ -258,6 +267,13 @@ class Admin extends \MapasCulturais\Controller
             }
         }
 
+        // Formulário de oportunidade publicado: ressincroniza os campos
+        // materializados nos formulários de inscrição das oportunidades vinculadas
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        if ($plugin && $entidade === 'opportunity') {
+            $plugin->syncLinkedOpportunities($id);
+        }
+
         $app->redirect($app->baseUrl . 'formulario-dinamico');
     }
 
@@ -294,6 +310,13 @@ class Admin extends \MapasCulturais\Controller
             'atualizado_em' => date('Y-m-d H:i:s'),
         ], ['id' => $id]);
 
+        // Formulário de oportunidade: materializa os campos nos formulários
+        // de inscrição das oportunidades vinculadas
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        if ($plugin && $formRow['entidade'] === 'opportunity') {
+            $plugin->syncLinkedOpportunities($id);
+        }
+
         $app->redirect($app->baseUrl . 'formulario-dinamico');
     }
 
@@ -311,6 +334,15 @@ class Admin extends \MapasCulturais\Controller
         $conn = $app->em->getConnection();
         $id = (int)($this->postData['id'] ?? 0);
         if (!$id) return;
+
+        // Remove os campos materializados nas oportunidades vinculadas
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        if ($plugin) {
+            foreach ($plugin->getLinkedOpportunityIds($id) as $opportunityId) {
+                $plugin->removeOpportunityRegistrationFields($opportunityId, $id);
+            }
+        }
+
         $conn->delete('formulario_dinamico_oportunidade', ['formulario_id' => $id]);
         $conn->delete('formulario_dinamico_campo', ['formulario_id' => $id]);
         $conn->delete('formulario_dinamico', ['id' => $id]);
@@ -366,6 +398,24 @@ class Admin extends \MapasCulturais\Controller
         $opportunityId = (int)($this->postData['oportunidade_id'] ?? 0);
         if (!$formId || !$opportunityId) throw new BadRequest(i::__('Parâmetros inválidos.'));
 
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+
+        // Uma oportunidade só pode ter um formulário: remove vínculos anteriores
+        // com outros formulários (e os campos materializados por eles)
+        $previous = $conn->fetchFirstColumn(
+            "SELECT formulario_id FROM formulario_dinamico_oportunidade WHERE oportunidade_id=? AND formulario_id!=?",
+            [$opportunityId, $formId]
+        );
+        foreach ($previous as $previousFormId) {
+            if ($plugin) {
+                $plugin->removeOpportunityRegistrationFields($opportunityId, (int)$previousFormId);
+            }
+            $conn->delete('formulario_dinamico_oportunidade', [
+                'formulario_id'   => $previousFormId,
+                'oportunidade_id' => $opportunityId,
+            ]);
+        }
+
         $exists = $conn->fetchOne(
             "SELECT id FROM formulario_dinamico_oportunidade WHERE formulario_id=? AND oportunidade_id=?",
             [$formId, $opportunityId]
@@ -376,6 +426,15 @@ class Admin extends \MapasCulturais\Controller
                 'oportunidade_id' => $opportunityId,
             ]);
         }
+
+        // Materializa os campos no formulário de inscrição da oportunidade
+        if ($plugin) {
+            $form = $plugin->getFormById($formId);
+            if ($form && $form->status === 'published') {
+                $plugin->syncOpportunityRegistrationFields($form, $opportunityId);
+            }
+        }
+
         $app->redirect($app->createUrl('formulario-dinamico', 'oportunities', ['id' => $formId]));
     }
 
@@ -390,6 +449,13 @@ class Admin extends \MapasCulturais\Controller
         $opportunityId = (int)($this->postData['id'] ?? 0);
         $formId = (int)($this->postData['formulario_id'] ?? 0);
         if (!$formId || !$opportunityId) return;
+
+        // Remove os campos materializados no formulário de inscrição
+        $plugin = \FormularioDinamico\Plugin::getInstance();
+        if ($plugin) {
+            $plugin->removeOpportunityRegistrationFields($opportunityId, $formId);
+        }
+
         $conn->delete('formulario_dinamico_oportunidade', [
             'formulario_id'   => $formId,
             'oportunidade_id' => $opportunityId,

@@ -8,7 +8,7 @@ app.component('form-field-editor', {
 
     emits: ['save', 'cancel'],
 
-    data() { return { edit: {} }; },
+    data() { return { edit: {}, errors: [] }; },
 
     computed: {
         hasOptions() { return ['select','multiselect','gender'].includes(this.edit.tipo); },
@@ -26,9 +26,16 @@ app.component('form-field-editor', {
         addOption() { if (!Array.isArray(this.edit.opcoes)) this.edit.opcoes = []; this.edit.opcoes.push(''); },
         removeOption(idx) { if (Array.isArray(this.edit.opcoes)) this.edit.opcoes.splice(idx, 1); },
         save() {
-            if (!this.edit.rotulo.trim()) { alert('O rótulo é obrigatório'); return; }
-            if (this.hasOptions && (!Array.isArray(this.edit.opcoes) || this.edit.opcoes.length === 0)) {
-                alert('Campos do tipo ' + this.edit.tipo + ' precisam de ao menos uma opção.'); return;
+            const text = Utils.getTexts('form-field-editor');
+            this.errors = [];
+            if (!this.edit.rotulo.trim()) {
+                this.errors.push(text('erro rotulo obrigatorio'));
+            }
+            if (this.hasOptions && (!Array.isArray(this.edit.opcoes) || this.edit.opcoes.filter(o => o && o.trim()).length === 0)) {
+                this.errors.push(text('erro opcoes obrigatorias').replace('{tipo}', this.edit.tipo));
+            }
+            if (this.errors.length) {
+                return;
             }
             this.$emit('save', {...this.edit});
         },

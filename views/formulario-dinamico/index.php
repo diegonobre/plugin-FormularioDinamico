@@ -1,13 +1,16 @@
 <?php
 use MapasCulturais\i;
 
-$this->import('mc-link mc-icon mc-card mc-modal');
+$this->import('
+    fd-confirm-action
+    mc-icon
+');
 ?>
 <div class="entity-list">
     <header class="entity-list__header">
         <h1><?= i::__('Formulários Dinâmicos') ?></h1>
         <div class="entity-list__actions">
-            <a class="btn btn-primary" href="<?= $app->createUrl('formulario-dinamico', 'novo') ?>">
+            <a class="button button--primary button--icon" href="<?= $app->createUrl('formulario-dinamico', 'novo') ?>">
                 <mc-icon name="add"></mc-icon>
                 <?= i::__('Novo Formulário') ?>
             </a>
@@ -52,42 +55,44 @@ $this->import('mc-link mc-icon mc-card mc-modal');
                                 <?php endif; ?>
                             </td>
                             <td class="entity-list__actions-cell">
-                                <a class="btn btn-primary btn-sm"
+                                <a class="button button--primary-outline button--sm button--icon"
                                    href="<?= $app->createUrl('formulario-dinamico', 'editar', [$form->id]) ?>">
                                     <mc-icon name="edit"></mc-icon>
                                     <?= i::__('Editar') ?>
                                 </a>
 
                                 <?php if ($form->status !== 'published'): ?>
-                                    <form method="POST"
-                                          action="<?= $app->createUrl('formulario-dinamico', 'publicar') ?>"
-                                          style="display:inline"
-                                          onsubmit="return confirm('<?= i::__('Publicar este formulário? Ele substituirá o formulário atual da entidade.') ?>')">
-                                        <input type="hidden" name="id" value="<?= $form->id ?>">
-                                        <button type="submit" class="btn btn-success btn-sm">
-                                            <?= i::__('Publicar') ?>
-                                        </button>
-                                    </form>
+                                    <fd-confirm-action
+                                        action="<?= $app->createUrl('formulario-dinamico', 'publicar') ?>"
+                                        :fields='{"id": <?= (int)$form->id ?>}'
+                                        title="<?= htmlspecialchars(i::__('Publicar formulário'), ENT_QUOTES) ?>"
+                                        message="<?= htmlspecialchars(sprintf(i::__('Deseja publicar o formulário "%s"? Ele substituirá o formulário publicado atualmente para esta entidade.'), $form->titulo), ENT_QUOTES) ?>"
+                                        yes="<?= htmlspecialchars(i::__('Publicar'), ENT_QUOTES) ?>"
+                                        no="<?= htmlspecialchars(i::__('Cancelar'), ENT_QUOTES) ?>"
+                                        label="<?= htmlspecialchars(i::__('Publicar'), ENT_QUOTES) ?>"
+                                        button-class="button--primary"
+                                    ></fd-confirm-action>
                                 <?php endif; ?>
 
                                 <?php if ($form->entidade === 'opportunity'): ?>
-                                    <a class="btn btn-secondary btn-sm"
+                                    <a class="button button--secondary button--sm button--icon"
                                        href="<?= $app->createUrl('formulario-dinamico', 'oportunities', [$form->id]) ?>">
                                         <mc-icon name="link"></mc-icon>
                                         <?= i::__('Vincular Oportunidades') ?>
                                     </a>
                                 <?php endif; ?>
 
-                                <form method="POST"
-                                      action="<?= $app->createUrl('formulario-dinamico', 'excluir') ?>"
-                                      style="display:inline"
-                                      onsubmit="return confirm('<?= i::__('Tem certeza que deseja excluir este formulário?') ?>')">
-                                    <input type="hidden" name="id" value="<?= $form->id ?>">
-                                    <button type="submit" class="btn btn-danger btn-sm">
-                                        <mc-icon name="delete"></mc-icon>
-                                        <?= i::__('Excluir') ?>
-                                    </button>
-                                </form>
+                                <fd-confirm-action
+                                    action="<?= $app->createUrl('formulario-dinamico', 'excluir') ?>"
+                                    :fields='{"id": <?= (int)$form->id ?>}'
+                                    title="<?= htmlspecialchars(i::__('Excluir formulário'), ENT_QUOTES) ?>"
+                                    message="<?= htmlspecialchars(sprintf(i::__('Tem certeza que deseja excluir o formulário "%s"? Esta ação não pode ser desfeita.'), $form->titulo), ENT_QUOTES) ?>"
+                                    yes="<?= htmlspecialchars(i::__('Excluir'), ENT_QUOTES) ?>"
+                                    no="<?= htmlspecialchars(i::__('Cancelar'), ENT_QUOTES) ?>"
+                                    icon="delete"
+                                    label="<?= htmlspecialchars(i::__('Excluir'), ENT_QUOTES) ?>"
+                                    button-class="button--text-danger"
+                                ></fd-confirm-action>
                             </td>
                         </tr>
                     <?php endforeach; ?>

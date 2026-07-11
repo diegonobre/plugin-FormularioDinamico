@@ -4,9 +4,7 @@ namespace FormularioDinamico;
 
 use MapasCulturais\App;
 use MapasCulturais\i;
-use MapasCulturais\Definitions\Metadata;
-use MapasCulturais\Exceptions\PermissionDenied;
-use MapasCulturais\Exceptions\BadRequest;
+use MapasCulturais\Entities\RegistrationFieldConfiguration;
 
 class Plugin extends \MapasCulturais\Plugin
 {
@@ -22,6 +20,17 @@ class Plugin extends \MapasCulturais\Plugin
         'space'       => 'Espaço',
         'event'       => 'Evento',
         'opportunity' => 'Oportunidade',
+    ];
+
+    /**
+     * Views de edição (do tema ativo) usadas para descobrir os campos
+     * realmente visíveis no app para cada entidade.
+     */
+    const ENTITY_EDIT_VIEWS = [
+        'agent'       => [['agent', 'edit-1.php'], ['agent', 'edit-2.php']],
+        'space'       => [['space', 'edit.php']],
+        'event'       => [['event', 'edit.php']],
+        'opportunity' => [['opportunity', 'edit.php']],
     ];
 
     static private $_instance;
@@ -69,182 +78,37 @@ class Plugin extends \MapasCulturais\Plugin
         });
 
         // ================================================================
-        // Injeção nos forms de criação/edição (apenas formulários publicados)
+        // Injeção nos formulários das entidades via tema (BaseV2)
+        //
+        // As views de edição/single do tema disparam o hook de template
+        // "tabs" — o formulário publicado é injetado como uma nova aba,
+        // usando os componentes do design system (mc-tab + entity-field).
+        //
+        // Formulários da entidade "opportunity" NÃO são injetados aqui:
+        // eles são materializados no formulário de inscrição da(s)
+        // oportunidade(s) vinculada(s) — veja syncOpportunityRegistrationFields().
         // ================================================================
-        $entity_types = ['agent', 'space', 'event'];
-        foreach ($entity_types as $type) {
-            // Edit: injeta campos dinâmicos + CSS para esconder cards originais
-            $app->hook("template({$type}.edit.tab-about):end", function () use ($app, $type) {
-                $entity = $this->data->entity;
-                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
-                if ($form) {
-                    echo '<style>.mc-card { display: none; } [data-dynamic-form="true"] { display: block; }</style>';
-                    $this->part('dynamic-form-fields', [
-                        'form'   => $form,
-                        'entity' => $entity,
-                    ]);
-                }
-            });
-
-            // Create: injeta campos dinâmicos sem esconder originais
-            $app->hook("template({$type}.create.tab-about):end", function () use ($app, $type) {
-                $entity = $this->data->entity;
-                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
-                if ($form) {
-                    $this->part('dynamic-form-fields', [
-                        'form'   => $form,
-                        'entity' => $entity,
-                    ]);
-                }
-            });
-
-            $app->hook("template({$type}.single.tab-about):end", function () use ($app, $type) {
-                $entity = $this->data->entity;
-                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
-                if ($form) {
-                    $this->part('dynamic-form-fields-display', [
-                        'form'   => $form,
-                        'entity' => $entity,
-                    ]);
-                }
-            });
-        }
-
-        // Oportunidade
-        $app->hook("template(opportunity.create.tab-about):end", function () use ($app) {
-            $entity = $this->data->entity;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($entity->id) : null;
-            if ($form) {
-                $this->part('dynamic-form-fields', [
-                    'form'   => $form,
-                    'entity' => $entity,
-                ]);
-            }
-        });
-
-        $app->hook("template(opportunity.edit.tab-about):end", function () use ($app) {
-            $entity = $this->data->entity;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($entity->id) : null;
-            if ($form) {
-                echo '<style>.mc-card { display: none; } [data-dynamic-form="true"] { display: block; }</style>';
-                $this->part('dynamic-form-fields', [
-                    'form'   => $form,
-                    'entity' => $entity,
-                ]);
-            }
-        });
-
-        $app->hook("template(opportunity.single.tab-about):end", function () use ($app) {
-            $entity = $this->data->entity;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($entity->id) : null;
-            if ($form) {
-                $this->part('dynamic-form-fields-display', [
-                    'form'   => $form,
-                    'entity' => $entity,
-                ]);
-            }
-        });
-
-        // ================================================================
-        // Injeção no formulário de inscrição (Registration)
-        // ================================================================
-
-        // Edit mode (draft — usuário preenchendo a inscrição)
-        $app->hook("template(registration.edit).form:end", function () use ($app) {
-            $entity = $this->data->entity;
-            $opportunity = $entity->opportunity ?? null;
-            if (!$opportunity) return;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($opportunity->id) : null;
-            if ($form) {
-                $this->part('dynamic-form-fields', [
-                    'form'   => $form,
-                    'entity' => $entity,
-                ]);
-                // Bridge: copia valores dos campos dinâmicos para o scope do Angular antes do save
-                echo '<script>
-                (function() {
-                    var checkInterval = setInterval(function() {
-                        if (window.$registrationScope && window.$registrationScope.saveRegistration) {
-                            clearInterval(checkInterval);
-                            var origSave = window.$registrationScope.saveRegistration;
-                            window.$registrationScope.saveRegistration = function() {
-                                var fields = document.querySelectorAll("[data-dynamic-form] input, [data-dynamic-form] select, [data-dynamic-form] textarea");
-                                fields.forEach(function(f) {
-                                    if (f.name && window.$registrationScope.data && window.$registrationScope.data.editableEntity) {
-                                        window.$registrationScope.data.editableEntity[f.name] = f.value;
-                                    }
-                                });
-                                return origSave.call(this);
-                            };
-                        }
-                    }, 200);
-                })();
-                </script>';
-            }
-        });
-
-        // View mode (após envio da inscrição — somente leitura)
-        $app->hook("template(registration.single).form:end", function () use ($app) {
-            $entity = $this->data->entity;
-            $opportunity = $entity->opportunity ?? null;
-            if (!$opportunity) return;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($opportunity->id) : null;
-            if ($form) {
-                $this->part('dynamic-form-fields-display', [
-                    'form'   => $form,
-                    'entity' => $entity,
-                ]);
-            }
-        });
-
-        // Validação no servidor
         foreach (['agent', 'space', 'event'] as $type) {
-            $entityClass = self::ENTITY_MAP[$type];
-            $app->hook("entity({$entityClass}).save:before", function () use ($app, $type) {
-                $entity = $this;
-                $form = self::$_instance ? self::$_instance->getPublishedForm($type) : null;
-                if (!$form) return;
-                foreach ($form->campos as $campo) {
-                    if (!$campo->obrigatorio) continue;
-                    $key = "{$form->slug}_{$campo->slug}";
-                    $value = $entity->getMetadata($key);
-                    if (empty($value)) {
-                        throw new BadRequest(i::__("O campo {$campo->rotulo} é obrigatório."));
-                    }
+            $app->hook("template({$type}.edit.tabs):end", function () use ($type) {
+                /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
+                $form = Plugin::getInstance()->getPublishedForm($type);
+                if ($form) {
+                    $this->part('dynamic-form-tab', ['form' => $form]);
+                }
+            });
+
+            $app->hook("template({$type}.single.tabs):end", function () use ($type) {
+                /** @var \MapasCulturais\Themes\BaseV2\Theme $this */
+                $form = Plugin::getInstance()->getPublishedForm($type);
+                $entity = $this->controller->requestedEntity ?? null;
+                if ($form && $entity) {
+                    $this->part('dynamic-form-single-tab', [
+                        'form'   => $form,
+                        'entity' => $entity,
+                    ]);
                 }
             });
         }
-
-        $app->hook("entity(MapasCulturais\Entities\Opportunity).save:before", function () use ($app) {
-            $entity = $this;
-            $form = self::$_instance ? self::$_instance->getPublishedForm('opportunity') : null;
-            if (!$form) return;
-            foreach ($form->campos as $campo) {
-                if (!$campo->obrigatorio) continue;
-                $key = "{$form->slug}_{$campo->slug}";
-                $value = $entity->getMetadata($key);
-                if (empty($value)) {
-                    throw new BadRequest(i::__("O campo {$campo->rotulo} é obrigatório."));
-                }
-            }
-        });
-
-        // Validação para campos dinâmicos na inscrição (Registration)
-        $app->hook("entity(MapasCulturais\Entities\Registration).save:before", function () use ($app) {
-            $entity = $this;
-            $opportunity = $entity->opportunity ?? null;
-            if (!$opportunity) return;
-            $form = self::$_instance ? self::$_instance->getFormForOpportunity($opportunity->id) : null;
-            if (!$form) return;
-            foreach ($form->campos as $campo) {
-                if (!$campo->obrigatorio) continue;
-                $key = "{$form->slug}_{$campo->slug}";
-                $value = $entity->getMetadata($key);
-                if (empty($value)) {
-                    throw new BadRequest(i::__("O campo {$campo->rotulo} é obrigatório."));
-                }
-            }
-        });
 
         // Assets
         $app->hook('GET(formulario-dinamico.<<*>>)', function () use ($app) {
@@ -257,9 +121,17 @@ class Plugin extends \MapasCulturais\Plugin
         $app = App::i();
         $app->registerController('formulario-dinamico', Controllers\Admin::class);
 
-        // Registra metadados APENAS de formulários publicados
+        // Registra metadados APENAS de formulários publicados.
+        //
+        // Formulários de oportunidade não registram metadados: seus campos
+        // são materializados como RegistrationFieldConfiguration no formulário
+        // de inscrição, e a própria plataforma cuida de renderização,
+        // salvamento e validação de obrigatoriedade no envio.
         $forms = $this->getPublishedForms();
         foreach ($forms as $form) {
+            if ($form->entidade === 'opportunity') {
+                continue;
+            }
             $entityClass = self::ENTITY_MAP[$form->entidade] ?? null;
             if (!$entityClass) continue;
             foreach ($form->campos as $campo) {
@@ -270,18 +142,12 @@ class Plugin extends \MapasCulturais\Plugin
                     'placeholder' => $campo->placeholder ?? '',
                 ];
                 if ($campo->obrigatorio) {
-                    $cfg['validations'] = ['required' => i::__("O campo {$campo->rotulo} é obrigatório")];
+                    $cfg['validations'] = ['required' => sprintf(i::__('O campo %s é obrigatório'), $campo->rotulo)];
                 }
                 if (!empty($campo->opcoes)) {
                     $cfg['options'] = $campo->opcoes;
                 }
                 $this->registerMetadata($entityClass, $key, $cfg);
-
-                // Para formulários de oportunidade, registra os mesmos metadados
-                // na entidade Registration para o formulário de inscrição
-                if ($form->entidade === 'opportunity') {
-                    $this->registerRegistrationMetadata($key, $cfg);
-                }
             }
         }
     }
@@ -349,6 +215,8 @@ class Plugin extends \MapasCulturais\Plugin
             "ALTER TABLE formulario_dinamico_campo ADD COLUMN IF NOT EXISTS grupo_titulo VARCHAR(255) DEFAULT ''",
             "UPDATE formulario_dinamico SET status = 'published' WHERE status IS NULL OR status = ''",
             "UPDATE formulario_dinamico SET ativo = true WHERE ativo IS NULL",
+            // garante uma oportunidade por formulário de inscrição
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_fdo_oportunidade ON formulario_dinamico_oportunidade (oportunidade_id)",
         ];
         foreach ($migrations as $stmt) {
             try { $app->em->getConnection()->executeStatement($stmt); } catch (\Exception $e) {}
@@ -440,6 +308,22 @@ class Plugin extends \MapasCulturais\Plugin
         return null;
     }
 
+    public function getFormById(int $formId): ?object
+    {
+        foreach ($this->getAllForms() as $form) {
+            if ((int)$form->id === $formId) {
+                return $form;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Retorna o formulário publicado vinculado à oportunidade.
+     *
+     * O formulário precisa ter sido explicitamente vinculado à oportunidade
+     * na tela "Vincular Oportunidades" do admin.
+     */
     public function getFormForOpportunity(int $opportunityId): ?object
     {
         $app = App::i();
@@ -451,19 +335,7 @@ class Plugin extends \MapasCulturais\Plugin
                 WHERE f.entidade='opportunity' AND f.status='published' AND fo.oportunidade_id=?
                 LIMIT 1", [$opportunityId]);
             if ($row) {
-                $forms = $this->getPublishedForms();
-                foreach ($forms as $form) {
-                    if ($form->id == $row['id']) return $form;
-                }
-            }
-            $row = $conn->fetchAssociative("
-                SELECT f.id FROM formulario_dinamico f
-                WHERE f.entidade='opportunity' AND f.status='published'
-                AND NOT EXISTS (SELECT 1 FROM formulario_dinamico_oportunidade fo WHERE fo.formulario_id=f.id)
-                LIMIT 1");
-            if ($row) {
-                $forms = $this->getPublishedForms();
-                foreach ($forms as $form) {
+                foreach ($this->getPublishedForms() as $form) {
                     if ($form->id == $row['id']) return $form;
                 }
             }
@@ -471,6 +343,25 @@ class Plugin extends \MapasCulturais\Plugin
         return null;
     }
 
+    public function getLinkedOpportunityIds(int $formId): array
+    {
+        $app = App::i();
+        try {
+            return array_map('intval', $app->em->getConnection()->fetchFirstColumn(
+                "SELECT oportunidade_id FROM formulario_dinamico_oportunidade WHERE formulario_id=?", [$formId]
+            ));
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    // ================================================================
+    // Campos padrão de um novo formulário
+    // ================================================================
+
+    /**
+     * Todos os metadados registrados da entidade (fallback).
+     */
     public function getAllEntityFields(string $entityType): array
     {
         $app = App::i();
@@ -482,16 +373,248 @@ class Plugin extends \MapasCulturais\Plugin
             $fields[] = (object)[
                 'key'         => $key,
                 'rotulo'      => $def->label,
-                'tipo'        => $def->type,
+                'tipo'        => $this->mapMetaTypeToPluginType($def->type),
                 'placeholder' => $def->placeholder ?? '',
                 'obrigatorio' => $isRequired,
                 'editavel'    => !$isRequired,
                 'nativo'      => $isRequired,
+                'opcoes'      => !empty($def->options) ? array_values($def->options) : [],
+                'grupo_id'    => 0,
+                'grupo_titulo'=> 'Geral',
             ];
         }
         return $fields;
     }
 
+    /**
+     * Campos realmente visíveis no app para a entidade.
+     *
+     * Lê as views de edição do tema ativo (cadeia de paths — o tema
+     * GPSCultural tem precedência sobre o core) e extrai os
+     * `<entity-field prop="...">` na ordem em que aparecem, agrupados
+     * pelas abas (`<mc-tab label="...">`) em que estão.
+     *
+     * Só retorna campos que são metadados registrados: propriedades
+     * nativas (name, type etc.) continuam aparecendo como "campos
+     * nativos" não removíveis no editor de formulário.
+     */
+    public function getVisibleEntityFields(string $entityType): array
+    {
+        $app = App::i();
+        $entityClass = self::ENTITY_MAP[$entityType] ?? null;
+        $views = self::ENTITY_EDIT_VIEWS[$entityType] ?? null;
+        if (!$entityClass || !$views) return [];
+
+        $registered = $app->getRegisteredMetadata($entityClass);
+
+        $fields = [];
+        $grupos = []; // titulo => id
+
+        foreach ($views as [$folder, $file]) {
+            $filename = $app->view->resolveFilename("views/{$folder}", $file);
+            if (!$filename || !is_readable($filename)) continue;
+            $content = file_get_contents($filename);
+            if (!$content) continue;
+
+            // divide o conteúdo pelas abas; o trecho antes da primeira aba cai no grupo "Geral"
+            $chunks = preg_split('/<mc-tab\s/', $content);
+            foreach ($chunks as $i => $chunk) {
+                $titulo = 'Geral';
+                if ($i > 0 && preg_match('/label="([^"]*)"/', $chunk, $m)) {
+                    $raw = $m[1];
+                    if (preg_match("/i::[_a-z]+\(\s*[\"']([^\"']+)[\"']/", $raw, $mm)) {
+                        $titulo = $mm[1];
+                    } elseif ($raw !== '' && strpos($raw, '<?') === false) {
+                        $titulo = $raw;
+                    }
+                }
+
+                if (!preg_match_all('/\bprop="([^"]+)"/u', $chunk, $mm)) continue;
+
+                foreach ($mm[1] as $prop) {
+                    if (isset($fields[$prop])) continue;
+                    $def = $registered[$prop] ?? null;
+                    if (!$def) continue;
+
+                    if (!isset($grupos[$titulo])) {
+                        $grupos[$titulo] = count($grupos);
+                    }
+                    $isRequired = $def->is_required ?? false;
+                    $fields[$prop] = (object)[
+                        'key'         => $prop,
+                        'rotulo'      => $def->label ?: $prop,
+                        'tipo'        => $this->mapMetaTypeToPluginType($def->type),
+                        'placeholder' => $def->placeholder ?? '',
+                        'obrigatorio' => $isRequired,
+                        'editavel'    => true,
+                        'nativo'      => false,
+                        'opcoes'      => !empty($def->options) ? array_values($def->options) : [],
+                        'grupo_id'    => $grupos[$titulo],
+                        'grupo_titulo'=> $titulo,
+                    ];
+                }
+            }
+        }
+
+        return array_values($fields);
+    }
+
+    // ================================================================
+    // Materialização no formulário de inscrição (Registration)
+    // ================================================================
+
+    /**
+     * Cria/atualiza os campos do formulário dinâmico como
+     * RegistrationFieldConfiguration da oportunidade. Com isso o
+     * formulário de inscrição nativo renderiza, salva e valida os
+     * campos (obrigatórios bloqueiam o envio da inscrição).
+     */
+    public function syncOpportunityRegistrationFields(object $form, int $opportunityId): void
+    {
+        $app = App::i();
+        $opportunity = $app->repo('Opportunity')->find($opportunityId);
+        if (!$opportunity) return;
+
+        $app->disableAccessControl();
+
+        $step = $app->repo('RegistrationStep')->findOneBy(
+            ['opportunity' => $opportunity],
+            ['displayOrder' => 'ASC', 'id' => 'ASC']
+        ) ?: $opportunity->getOrCreateStep('');
+
+        // separa campos já materializados deste formulário dos demais campos da oportunidade
+        $existing = [];
+        $maxOrder = 0;
+        foreach ($opportunity->registrationFieldConfigurations as $rfc) {
+            $meta = $rfc->config['formulario_dinamico'] ?? null;
+            if ($meta && (int)($meta['form_id'] ?? 0) === (int)$form->id && !empty($meta['ref'])) {
+                $existing[$meta['ref']] = $rfc;
+            } else {
+                $maxOrder = max($maxOrder, (int)$rfc->displayOrder);
+            }
+        }
+
+        // monta a lista desejada: um "section" por grupo + um campo por campo do formulário
+        $desired = [];
+        $currentGroup = null;
+        $groupCount = count(array_unique(array_map(fn($c) => (int)($c->grupo_id ?? 0), $form->campos)));
+        foreach ($form->campos as $campo) {
+            $gid = (int)($campo->grupo_id ?? 0);
+            $gtitulo = trim((string)($campo->grupo_titulo ?? '')) ?: i::__('Geral');
+            if ($currentGroup !== $gid && ($groupCount > 1 || strcasecmp($gtitulo, 'Geral') !== 0)) {
+                $desired[] = [
+                    'ref'          => "section_{$gid}",
+                    'fieldType'    => 'section',
+                    'title'        => $gtitulo,
+                    'description'  => null,
+                    'required'     => false,
+                    'fieldOptions' => [],
+                ];
+            }
+            $currentGroup = $gid;
+
+            $opcoes = array_values(array_filter(
+                array_map(fn($o) => trim((string)$o), (array)($campo->opcoes ?? [])),
+                fn($o) => $o !== ''
+            ));
+
+            $desired[] = [
+                'ref'          => "campo_{$campo->slug}",
+                'fieldType'    => $this->mapRegistrationFieldType($campo->tipo),
+                'title'        => $campo->rotulo,
+                'description'  => $campo->placeholder ?: null,
+                'required'     => (bool)$campo->obrigatorio,
+                'fieldOptions' => $opcoes,
+            ];
+        }
+
+        $seen = [];
+        $order = $maxOrder;
+        foreach ($desired as $d) {
+            $order++;
+            $rfc = $existing[$d['ref']] ?? null;
+            if (!$rfc) {
+                $rfc = new RegistrationFieldConfiguration;
+                $rfc->owner = $opportunity;
+            }
+            $rfc->title = $d['title'];
+            $rfc->fieldType = $d['fieldType'];
+            $rfc->required = $d['required'];
+            $rfc->fieldOptions = $d['fieldOptions'];
+            $rfc->description = $d['description'];
+            $rfc->displayOrder = $order;
+            $rfc->step = $step->id;
+            $rfc->config = array_merge((array)($rfc->config ?: []), [
+                'formulario_dinamico' => [
+                    'form_id' => (int)$form->id,
+                    'ref'     => $d['ref'],
+                ],
+            ]);
+            $rfc->save();
+            $seen[$d['ref']] = true;
+        }
+
+        // remove campos materializados que não existem mais no formulário
+        foreach ($existing as $ref => $rfc) {
+            if (!isset($seen[$ref])) {
+                $rfc->delete();
+            }
+        }
+
+        $app->em->flush();
+        $app->enableAccessControl();
+    }
+
+    /**
+     * Remove os campos materializados pelo plugin na oportunidade.
+     * Se $formId for informado, remove apenas os campos daquele formulário.
+     */
+    public function removeOpportunityRegistrationFields(int $opportunityId, ?int $formId = null): void
+    {
+        $app = App::i();
+        $opportunity = $app->repo('Opportunity')->find($opportunityId);
+        if (!$opportunity) return;
+
+        $app->disableAccessControl();
+        $removed = false;
+        foreach ($opportunity->registrationFieldConfigurations as $rfc) {
+            $meta = $rfc->config['formulario_dinamico'] ?? null;
+            if ($meta && ($formId === null || (int)($meta['form_id'] ?? 0) === $formId)) {
+                $rfc->delete();
+                $removed = true;
+            }
+        }
+        if ($removed) {
+            $app->em->flush();
+        }
+        $app->enableAccessControl();
+    }
+
+    /**
+     * Ressincroniza os campos materializados em todas as oportunidades
+     * vinculadas ao formulário (chamado ao publicar/editar o formulário).
+     */
+    public function syncLinkedOpportunities(int $formId): void
+    {
+        $form = $this->getFormById($formId);
+        if (!$form || $form->entidade !== 'opportunity') return;
+
+        foreach ($this->getLinkedOpportunityIds($formId) as $opportunityId) {
+            if ($form->status === 'published') {
+                $this->syncOpportunityRegistrationFields($form, $opportunityId);
+            } else {
+                $this->removeOpportunityRegistrationFields($opportunityId, $formId);
+            }
+        }
+    }
+
+    // ================================================================
+    // Mapeamento de tipos
+    // ================================================================
+
+    /**
+     * Tipo de campo do plugin → tipo de metadado (entity-field).
+     */
     private function mapFieldType(string $type): string
     {
         $map = [
@@ -501,5 +624,59 @@ class Plugin extends \MapasCulturais\Plugin
             'select'=>'select','multiselect'=>'multiselect',
         ];
         return $map[$type] ?? 'string';
+    }
+
+    /**
+     * Tipo de campo do plugin → fieldType de RegistrationFieldConfiguration
+     * (módulo RegistrationFieldTypes).
+     */
+    public function mapRegistrationFieldType(string $type): string
+    {
+        $map = [
+            'text'        => 'text',
+            'textarea'    => 'textarea',
+            'number'      => 'number',
+            'email'       => 'email',
+            'url'         => 'url',
+            'date'        => 'date',
+            'datetime'    => 'date',
+            'phone'       => 'brPhone',
+            'cep'         => 'text',
+            'cpf'         => 'cpf',
+            'cnpj'        => 'cnpj',
+            'select'      => 'select',
+            'gender'      => 'select',
+            'multiselect' => 'checkboxes',
+        ];
+        return $map[$type] ?? 'text';
+    }
+
+    /**
+     * Tipo de metadado registrado → tipo de campo do plugin.
+     */
+    private function mapMetaTypeToPluginType(?string $type): string
+    {
+        $map = [
+            'string'      => 'text',
+            'text'        => 'textarea',
+            'textarea'    => 'textarea',
+            'select'      => 'select',
+            'multiselect' => 'multiselect',
+            'checklist'   => 'multiselect',
+            'date'        => 'date',
+            'datetime'    => 'datetime',
+            'int'         => 'number',
+            'integer'     => 'number',
+            'number'      => 'number',
+            'float'       => 'number',
+            'email'       => 'email',
+            'url'         => 'url',
+            'link'        => 'url',
+            'cpf'         => 'cpf',
+            'cnpj'        => 'cnpj',
+            'phone'       => 'phone',
+            'cep'         => 'cep',
+        ];
+        return $map[$type ?? ''] ?? 'text';
     }
 }

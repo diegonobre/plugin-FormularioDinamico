@@ -384,6 +384,22 @@
     padding: 1rem 0;
 }
 
+/* --- Confirmação (mc-modal / vue-final-modal) --- */
+/* Overlay levemente acinzentado e desfocado atrás dos modais de confirmação */
+.vfm .vfm__overlay.vfm--overlay {
+    background: rgba(33, 33, 33, 0.45);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.fd-confirm-action {
+    display: inline-flex;
+}
+
+.fd-confirm-action__form {
+    display: none;
+}
+
 /* --- Field Editor Modal --- */
 .form-field-editor {
     position: fixed;
@@ -397,7 +413,22 @@
 .form-field-editor__overlay {
     position: absolute;
     inset: 0;
-    background: rgba(0,0,0,0.4);
+    background: rgba(33, 33, 33, 0.45);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.form-field-editor__errors {
+    background: #f8d7da;
+    border: 1px solid #f5c2c7;
+    border-radius: 4px;
+    color: #842029;
+    padding: 0.5rem 0.75rem;
+}
+
+.form-field-editor__errors p {
+    margin: 0.15rem 0;
+    font-size: 0.85rem;
 }
 
 .form-field-editor__modal {

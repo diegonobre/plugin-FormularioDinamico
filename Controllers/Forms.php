@@ -41,7 +41,7 @@ class Forms extends \MapasCulturais\Controller
         if ($entidade === 'opportunity') {
             $form = $plugin->getFormForOpportunity($entityId);
         } else {
-            $form = $plugin->getActiveForm($entidade);
+            $form = $plugin->getPublishedForm($entidade);
         }
 
         if (!$form) {
@@ -110,7 +110,7 @@ class Forms extends \MapasCulturais\Controller
         if ($entidade === 'opportunity') {
             $form = $plugin->getFormForOpportunity($entityId);
         } else {
-            $form = $plugin->getActiveForm($entidade);
+            $form = $plugin->getPublishedForm($entidade);
         }
 
         if (!$form) {
